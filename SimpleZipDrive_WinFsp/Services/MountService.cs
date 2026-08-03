@@ -24,6 +24,7 @@ public class MountService : IDisposable, IMountService
     private const int StatusDeviceAlreadyExists = unchecked((int)0xC0000038);
     private const int StatusObjectPathNotFound = unchecked((int)0xC000003A);
     private const int StatusNoSuchDevice = unchecked((int)0xC000000E);
+    private const int StatusObjectNameCollision = unchecked((int)0xC0000035);
 
     private readonly ILoggingService _loggingService;
     private readonly ISettingsService _settingsService;
@@ -60,14 +61,13 @@ public class MountService : IDisposable, IMountService
         }
 
         var archiveType = GetArchiveType(archivePath);
-        var supportedTypes = new[] { "zip", "7z", "rar", "tar" };
 
-        if (!supportedTypes.Contains(archiveType, StringComparer.OrdinalIgnoreCase))
+        if (!ArchiveFormats.IsSupportedArchive(archivePath))
         {
             _loggingService.Log($"\n{AppTheme.Section("INVALID FILE TYPE")}");
             _loggingService.Log($"Error: The file '{Path.GetFileName(archivePath)}' is not a supported archive.");
             throw new ArgumentException(
-                $"The file '{Path.GetFileName(archivePath)}' is not a supported archive format (expected .zip, .7z, .rar, .tar, .tar.gz, .tar.bz2, or .tar.xz).",
+                $"The file '{Path.GetFileName(archivePath)}' is not a supported archive format (expected {ArchiveFormats.SupportedExtensionsDescription}).",
                 nameof(archivePath));
         }
 
@@ -163,19 +163,7 @@ public class MountService : IDisposable, IMountService
         }
     }
 
-    public string GetArchiveType(string filePath)
-    {
-        var fileName = Path.GetFileName(filePath).ToLowerInvariant();
-
-        if (fileName.EndsWith(".tar.gz", StringComparison.Ordinal) || fileName.EndsWith(".tar.bz2", StringComparison.Ordinal) || fileName.EndsWith(".tar.xz", StringComparison.Ordinal) ||
-            fileName.EndsWith(".tgz", StringComparison.Ordinal) || fileName.EndsWith(".tbz2", StringComparison.Ordinal) || fileName.EndsWith(".txz", StringComparison.Ordinal))
-        {
-            return "tar";
-        }
-
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return extension.TrimStart('.');
-    }
+    public string GetArchiveType(string filePath) => ArchiveFormats.GetArchiveType(filePath);
 
     public void Dispose()
     {
@@ -204,7 +192,9 @@ public class MountService : IDisposable, IMountService
         if (!EnsureWinFspOnPath())
             return false;
 
-        return true;
+        // Verify the native DLL can actually be loaded. This guards against stale PATH entries
+        // and corrupted installations that would otherwise report WinFsp as installed.
+        return TryLoadWinFspNativeDll();
     }
 
     private static bool IsWinFspDriverRunning()
@@ -309,6 +299,7 @@ public class MountService : IDisposable, IMountService
             StatusAccessDenied => "Access denied. Please run as administrator or check permissions.",
             StatusInsufficientResources => "Insufficient system resources. Please close other applications and try again.",
             StatusDeviceAlreadyExists => "A device already exists at this mount point. Please choose a different location.",
+            StatusObjectNameCollision => "The mount point is already in use by another drive or process. Please choose a different drive letter or folder.",
             StatusNoSuchDevice => "The WinFsp device is not available. Please verify the WinFsp driver is installed and running.",
             _ => $"Mount failed with status 0x{unchecked((uint)statusCode):X8}. This may be caused by an outdated WinFsp driver."
         };
@@ -320,13 +311,6 @@ public class MountService : IDisposable, IMountService
     {
         try
         {
-            var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-            if (currentPath.Contains("WinFsp", StringComparison.OrdinalIgnoreCase))
-            {
-                _winFspBinDir = FindWinFspBinDir();
-                return true;
-            }
-
             var binDir = FindWinFspBinDir();
 
             if (binDir == null)
@@ -337,7 +321,12 @@ public class MountService : IDisposable, IMountService
             if (!File.Exists(dllPath))
                 return false;
 
-            Environment.SetEnvironmentVariable("PATH", binDir + ";" + currentPath, EnvironmentVariableTarget.Process);
+            var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+            if (!currentPath.Contains(binDir, StringComparison.OrdinalIgnoreCase))
+            {
+                Environment.SetEnvironmentVariable("PATH", binDir + ";" + currentPath, EnvironmentVariableTarget.Process);
+            }
+
             _winFspBinDir = binDir;
 
             return true;
@@ -557,6 +546,15 @@ public class MountService : IDisposable, IMountService
                 UseShellExecute = true
             });
         }
+    }
+
+    private static void ShowMountPointInUseDialog(string mountPoint)
+    {
+        var message = $"The mount point '{mountPoint}' is already in use by another drive or process.\n\n" +
+                      "Please unmount the conflicting drive or choose a different drive letter or folder.";
+
+        MessageBox.Show(message, "Mount Point In Use",
+            MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private static bool IsVersionMismatchError(Exception ex)
@@ -812,6 +810,11 @@ public class MountService : IDisposable, IMountService
                         case StatusNoSuchDevice:
                         case StatusAccessDenied:
                             ShowWinFspDriverErrorDialog(specificError);
+                            break;
+                        case StatusObjectNameCollision:
+                            // The mount point is already in use - this is not a driver problem,
+                            // so don't suggest reinstalling/updating WinFsp.
+                            ShowMountPointInUseDialog(mountPoint);
                             break;
                         default:
                             ShowWinFspMountFailedUpdateDialog(specificError);

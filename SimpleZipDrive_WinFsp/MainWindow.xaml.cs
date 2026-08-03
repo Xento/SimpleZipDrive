@@ -155,7 +155,7 @@ public partial class MainWindow : IDisposable
         {
             _loggingService.LogError($"{AppTheme.Section("INVALID FILE TYPE")}");
             _loggingService.LogError($"Error: The file '{Path.GetFileName(zipFilePath)}' is not a supported archive.");
-            _loggingService.LogError($"Detected extension: '{Path.GetExtension(zipFilePath)}' (expected: .zip, .7z, .rar, .tar, .tar.gz, .tar.bz2, or .tar.xz)");
+            _loggingService.LogError($"Detected extension: '{Path.GetExtension(zipFilePath)}' (expected: {ArchiveFormats.SupportedExtensionsDescription})");
             _loggingService.LogError("Simple Zip Drive can only mount ZIP, 7Z, RAR, and TAR archives.");
             return;
         }
@@ -273,7 +273,7 @@ public partial class MainWindow : IDisposable
             var openFileDialog = new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Select Archive File",
-                Filter = "Archive files (*.zip;*.7z;*.rar;*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz)|*.zip;*.7z;*.rar;*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz|ZIP files (*.zip)|*.zip|7Z files (*.7z)|*.7z|RAR files (*.rar)|*.rar|TAR files (*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz)|*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz|All files (*.*)|*.*",
+                Filter = ArchiveFormats.DialogFilter,
                 CheckFileExists = true,
                 CheckPathExists = true
             };
@@ -316,7 +316,7 @@ public partial class MainWindow : IDisposable
             var openFileDialog = new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Select Archive File",
-                Filter = "Archive files (*.zip;*.7z;*.rar;*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz)|*.zip;*.7z;*.rar;*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz|ZIP files (*.zip)|*.zip|7Z files (*.7z)|*.7z|RAR files (*.rar)|*.rar|TAR files (*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz)|*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz|All files (*.*)|*.*",
+                Filter = ArchiveFormats.DialogFilter,
                 CheckFileExists = true,
                 CheckPathExists = true
             };
@@ -351,7 +351,7 @@ public partial class MainWindow : IDisposable
             var openFileDialog = new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Select Archive File",
-                Filter = "Archive files (*.zip;*.7z;*.rar;*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz)|*.zip;*.7z;*.rar;*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz|ZIP files (*.zip)|*.zip|7Z files (*.7z)|*.7z|RAR files (*.rar)|*.rar|TAR files (*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz)|*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tgz;*.tbz2;*.txz|All files (*.*)|*.*",
+                Filter = ArchiveFormats.DialogFilter,
                 CheckFileExists = true,
                 CheckPathExists = true
             };
@@ -593,15 +593,5 @@ public partial class MainWindow : IDisposable
     }
 
     private static bool IsSupportedArchiveExtension(string filePath)
-    {
-        var fileName = Path.GetFileName(filePath).ToLowerInvariant();
-        if (fileName.EndsWith(".tar.gz", StringComparison.Ordinal) || fileName.EndsWith(".tar.bz2", StringComparison.Ordinal) || fileName.EndsWith(".tar.xz", StringComparison.Ordinal) ||
-            fileName.EndsWith(".tgz", StringComparison.Ordinal) || fileName.EndsWith(".tbz2", StringComparison.Ordinal) || fileName.EndsWith(".txz", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return extension is ".zip" or ".7z" or ".rar" or ".tar";
-    }
+        => ArchiveFormats.IsSupportedArchive(filePath);
 }

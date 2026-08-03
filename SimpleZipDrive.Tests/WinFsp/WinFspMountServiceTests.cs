@@ -45,6 +45,9 @@ public class WinFspMountServiceTests : IDisposable
     [InlineData("archive.tgz", "tar")]
     [InlineData("archive.tbz2", "tar")]
     [InlineData("archive.txz", "tar")]
+    [InlineData("archive.cbz", "zip")]
+    [InlineData("archive.cbr", "rar")]
+    [InlineData("archive.cb7", "7z")]
     public void GetArchiveType_KnownExtensions_ReturnsCorrectType(string filePath, string expected)
     {
         var service = new MountService(_loggingService, _settingsService);

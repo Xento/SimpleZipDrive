@@ -326,4 +326,32 @@ public class ErrorLoggerAdditionalTests
         var result = ErrorLogger.IsUserError(ex);
         Assert.False(result);
     }
+
+    // ─── IsUserError: expected environment conditions (WinFsp / Dokan) are not bugs ───
+
+    [Theory]
+    [InlineData("WinFsp not found. Unable to mount archive.")]
+    [InlineData("Mount failed: WinFsp version mismatch. Installed: ~2.1, Required: 2.2.")]
+    [InlineData("WinFsp mount error: incorrect dll version (need 2.2, have 2.1)")]
+    [InlineData("WinFsp driver service is not running. Please start the WinFsp.Launcher service.")]
+    [InlineData("WinFsp native DLL could not be loaded. The DLL may be missing.")]
+    [InlineData("WinFsp mount failed with status 0xC0000035: Mount failed with status 0xC0000035.")]
+    [InlineData("The WinFsp driver was not found or is not running. Please install or start the WinFsp service.")]
+    [InlineData("Dokan driver not found. Unable to mount archive.")]
+    [InlineData("Can't install the Dokan driver")]
+    [InlineData("The file 'book.cbz' is not a supported archive format (expected .zip, .7z, .rar, .tar).")]
+    public void IsUserError_ExpectedEnvironmentOrUserConditions_ReturnsTrue(string message)
+    {
+        var ex = new InvalidOperationException(message);
+        var result = ErrorLogger.IsUserError(ex);
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void IsUserError_UnrelatedMountError_ReturnsFalse()
+    {
+        var ex = new InvalidOperationException("Unexpected failure in ZipFs.InitializeEntries.");
+        var result = ErrorLogger.IsUserError(ex);
+        Assert.False(result);
+    }
 }

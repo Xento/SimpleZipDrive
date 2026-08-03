@@ -808,7 +808,10 @@ public class ZipFileSystemCore : IDisposable
             }
             finally
             {
-                try { entrySemaphore.Release(); }
+                try
+                {
+                    entrySemaphore.Release();
+                }
                 catch (ObjectDisposedException) { /* Disposed during shutdown */ }
             }
         }

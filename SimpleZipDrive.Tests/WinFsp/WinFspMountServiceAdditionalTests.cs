@@ -360,4 +360,37 @@ public class WinFspMountServiceAdditionalTests : IDisposable
             }
         }
     }
+
+    // ─── GetMountStatusErrorMessage (private static, via reflection) ───
+
+    private static string InvokeGetMountStatusErrorMessage(int statusCode)
+    {
+        var method = typeof(MountService).GetMethod("GetMountStatusErrorMessage",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        return (string)method.Invoke(null, new object[] { statusCode })!;
+    }
+
+    [Theory]
+    [InlineData(unchecked((int)0xC0000035), "already in use")]
+    [InlineData(unchecked((int)0xC0000034), "not found or is not running")]
+    [InlineData(unchecked((int)0xC000003A), "path was not found")]
+    [InlineData(unchecked((int)0xC0000022), "Access denied")]
+    [InlineData(unchecked((int)0xC000009A), "Insufficient system resources")]
+    [InlineData(unchecked((int)0xC0000038), "already exists")]
+    [InlineData(unchecked((int)0xC000000E), "not available")]
+    public void GetMountStatusErrorMessage_KnownStatusCodes_ReturnsSpecificMessage(int statusCode, string expectedFragment)
+    {
+        var result = InvokeGetMountStatusErrorMessage(statusCode);
+
+        Assert.Contains(expectedFragment, result);
+    }
+
+    [Fact]
+    public void GetMountStatusErrorMessage_UnknownStatusCode_ReturnsFallback()
+    {
+        var result = InvokeGetMountStatusErrorMessage(unchecked((int)0xC00000BB));
+
+        Assert.Contains("Mount failed with status", result);
+        Assert.Contains("outdated WinFsp driver", result);
+    }
 }

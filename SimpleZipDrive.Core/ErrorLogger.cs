@@ -385,6 +385,7 @@ public class ErrorLogger : IDisposable
             messageLower.Contains("invalid archive") ||
             messageLower.Contains("unknown format") ||
             messageLower.Contains("not a valid") ||
+            messageLower.Contains("not a supported archive") ||
             (messageLower.Contains("corrupt") &&
              (messageLower.Contains("archive") ||
               messageLower.Contains("file") ||
@@ -397,7 +398,8 @@ public class ErrorLogger : IDisposable
         var isDriveError =
             messageLower.Contains("can't assign a drive letter") ||
             (messageLower.Contains("drive letter") && messageLower.Contains("in use")) ||
-            (messageLower.Contains("mount point") && messageLower.Contains("invalid"));
+            (messageLower.Contains("mount point") && messageLower.Contains("invalid")) ||
+            (messageLower.Contains("mount point") && messageLower.Contains("already in use"));
 
         // Password-related errors (user can retry with correct password)
         var isPasswordError =
@@ -420,7 +422,26 @@ public class ErrorLogger : IDisposable
             messageLower.Contains("canceled") ||
             messageLower.Contains("cancelled");
 
-        return isArchiveError || isDriveError || isPasswordError || isCancellationError;
+        // Expected environment conditions: missing/outdated file-system drivers (Dokan, WinFsp)
+        // and mount-point collisions are user/environment issues, not application bugs. They
+        // already surface as clear dialogs, so forwarding them only floods the bug report API.
+        var isEnvironmentError =
+            (messageLower.Contains("winfsp") && messageLower.Contains("not found")) ||
+            (messageLower.Contains("winfsp") && messageLower.Contains("version mismatch")) ||
+            messageLower.Contains("incorrect dll version") ||
+            (messageLower.Contains("winfsp") && messageLower.Contains("not running")) ||
+            (messageLower.Contains("winfsp") && messageLower.Contains("could not be loaded")) ||
+            (messageLower.Contains("winfsp") && messageLower.Contains("mount failed with status") &&
+             (messageLower.Contains("0xc0000035") || messageLower.Contains("0xc0000038") ||
+              messageLower.Contains("0xc000003a") || messageLower.Contains("0xc000000e") ||
+              messageLower.Contains("0xc0000022") || messageLower.Contains("0xc000009a"))) ||
+            (messageLower.Contains("winfsp") && messageLower.Contains("already in use")) ||
+            messageLower.Contains("dokan driver not found") ||
+            // Produced at runtime from DokanNet's DokanException.Message ("Can't install the Dokan driver"),
+            // e.g. "Dokan error: Can't install the Dokan driver" and "[Warning] ... - Can't install the Dokan driver".
+            messageLower.Contains("can't install the dokan driver");
+
+        return isArchiveError || isDriveError || isPasswordError || isCancellationError || isEnvironmentError;
     }
 
     /// <summary>

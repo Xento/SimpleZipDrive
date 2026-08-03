@@ -48,7 +48,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="SharpCompress" Version="0.50.0" />
+        <PackageReference Include="SharpCompress" Version="0.50.3" />
         <PackageReference Include="winfsp.net" Version="2.2.26194" />
     </ItemGroup>
 </Project>
