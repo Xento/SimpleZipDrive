@@ -14,10 +14,11 @@ namespace SimpleZipDrive_WinFsp.Services;
 
 public class MountService : IDisposable, IMountService
 {
-    private static readonly Version RequiredWinFspVersion = new(2, 2);
+    // WinFsp 2.1 is the latest stable release (2.2+ are beta versions).
+    // winfsp.net 2.1.25156 is built against it and accepts native WinFsp >= 2.1.
+    private static readonly Version RequiredWinFspVersion = new(2, 1);
 
     // NTSTATUS codes relevant to WinFsp mount operations
-    private const int StatusSuccess = 0x00000000;
     private const int StatusObjectNameNotFound = unchecked((int)0xC0000034);
     private const int StatusAccessDenied = unchecked((int)0xC0000022);
     private const int StatusInsufficientResources = unchecked((int)0xC000009A);
@@ -163,7 +164,10 @@ public class MountService : IDisposable, IMountService
         }
     }
 
-    public string GetArchiveType(string filePath) => ArchiveFormats.GetArchiveType(filePath);
+    public string GetArchiveType(string filePath)
+    {
+        return ArchiveFormats.GetArchiveType(filePath);
+    }
 
     public void Dispose()
     {
@@ -418,40 +422,6 @@ public class MountService : IDisposable, IMountService
         return null;
     }
 
-    [RequiresAssemblyFiles("Calls System.Reflection.Assembly.Location")]
-    private static Version? GetWinFspLibraryVersion()
-    {
-        try
-        {
-            var assembly = typeof(FileSystemHost).Assembly;
-            var location = assembly.Location;
-
-            if (string.IsNullOrEmpty(location))
-            {
-                var baseDir = AppContext.BaseDirectory;
-                var candidate = Path.Combine(baseDir, "winfsp-msil.dll");
-                if (File.Exists(candidate))
-                {
-                    location = candidate;
-                }
-            }
-
-            if (!string.IsNullOrEmpty(location) && File.Exists(location))
-            {
-                var fvi = FileVersionInfo.GetVersionInfo(location);
-                if (fvi.FileVersion != null && Version.TryParse(fvi.FileVersion, out var version))
-                    return version;
-            }
-
-            return assembly.GetName().Version;
-        }
-        catch
-        {
-            // Best-effort; version detection failure is non-fatal
-            return null;
-        }
-    }
-
     private static string GetDeepestMessage(Exception ex)
     {
         var current = ex;
@@ -565,7 +535,7 @@ public class MountService : IDisposable, IMountService
 
     private static Version? ExtractVersionFromMismatchMessage(string message)
     {
-        // Parse "incorrect dll version (need 2.2, have 2.1)" format
+        // Parse "incorrect dll version (need X.Y, have A.B)" format
         try
         {
             var haveIndex = message.IndexOf("have ", StringComparison.OrdinalIgnoreCase);
@@ -640,7 +610,6 @@ public class MountService : IDisposable, IMountService
         }
     }
 
-    [RequiresAssemblyFiles("Calls SimpleZipDrive_WinFsp.Services.MountService.GetWinFspLibraryVersion()")]
     private async Task<bool> AttemptMountLifecycleAsync(string archivePath, string mountPoint, string archiveType)
     {
         var isDriveLetter = IsDriveLetterMountPoint(mountPoint);
@@ -664,11 +633,11 @@ public class MountService : IDisposable, IMountService
             _loggingService.LogError("WinFsp native DLL could not be loaded. The DLL may be missing, inaccessible, or the wrong architecture.");
             DiagnosticLogger.Log("WinFsp native DLL pre-load check failed.");
             ShowWinFspDriverErrorDialog("The WinFsp native DLL could not be loaded even though WinFsp appears to be installed.\n\n" +
-                "This can happen if:\n" +
-                "- The WinFsp installation is corrupted\n" +
-                "- The DLL architecture doesn't match this application (32-bit vs 64-bit)\n" +
-                "- The DLL is locked or inaccessible\n\n" +
-                "Please reinstall WinFsp and try again.");
+                                        "This can happen if:\n" +
+                                        "- The WinFsp installation is corrupted\n" +
+                                        "- The DLL architecture doesn't match this application (32-bit vs 64-bit)\n" +
+                                        "- The DLL is locked or inaccessible\n\n" +
+                                        "Please reinstall WinFsp and try again.");
             return false;
         }
 
@@ -820,6 +789,7 @@ public class MountService : IDisposable, IMountService
                             ShowWinFspMountFailedUpdateDialog(specificError);
                             break;
                     }
+
                     return false;
                 }
             }
@@ -864,6 +834,7 @@ public class MountService : IDisposable, IMountService
                 {
                     ErrorLoggerStatic.ReportSilentException(ex, $"MountService.AttemptMountLifecycleAsync: Error mounting '{archivePath}' to '{mountPoint}'", true);
                 }
+
                 return false;
             }
 

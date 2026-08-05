@@ -45,7 +45,14 @@ public class StoredEntryStreamReadAheadTests
         }
         finally
         {
-            try { File.Delete(tempPath); } catch { /* ignored */ }
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch
+            {
+                /* ignored */
+            }
         }
     }
 
@@ -92,7 +99,14 @@ public class StoredEntryStreamReadAheadTests
         }
         finally
         {
-            try { File.Delete(tempPath); } catch { /* ignored */ }
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch
+            {
+                /* ignored */
+            }
         }
     }
 
@@ -125,7 +139,14 @@ public class StoredEntryStreamReadAheadTests
         }
         finally
         {
-            try { File.Delete(tempPath); } catch { /* ignored */ }
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch
+            {
+                /* ignored */
+            }
         }
     }
 
@@ -210,7 +231,14 @@ public class StoredEntryStreamReadAheadTests
         }
         finally
         {
-            try { File.Delete(tempPath); } catch { /* ignored */ }
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch
+            {
+                /* ignored */
+            }
         }
     }
 
@@ -233,8 +261,8 @@ public class StoredEntryStreamReadAheadTests
             var read = stream.ReadAt(1, buffer, 10, 4);
 
             Assert.Equal(4, read);
-            Assert.Equal(0, buffer[0]);   // untouched
-            Assert.Equal(0, buffer[9]);   // untouched
+            Assert.Equal(0, buffer[0]); // untouched
+            Assert.Equal(0, buffer[9]); // untouched
             Assert.Equal(40, buffer[10]); // data[2+1] = 40
             Assert.Equal(50, buffer[11]); // data[2+2] = 50
             Assert.Equal(60, buffer[12]); // data[2+3] = 60
@@ -242,7 +270,14 @@ public class StoredEntryStreamReadAheadTests
         }
         finally
         {
-            try { File.Delete(tempPath); } catch { /* ignored */ }
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch
+            {
+                /* ignored */
+            }
         }
     }
 

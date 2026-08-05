@@ -24,8 +24,6 @@ public static class ArchiveFormats
     private static readonly string[] TarCompressedSuffixes =
         [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".txz"];
 
-    private static readonly string[] ComicExtensions = [".cbz", ".cbr", ".cb7"];
-
     /// <summary>
     /// Human-readable list of supported extensions, used in error messages and dialogs.
     /// </summary>
@@ -68,7 +66,7 @@ public static class ArchiveFormats
             ".cbz" => Zip,
             ".cbr" => Rar,
             ".cb7" => SevenZip,
-            _ => extension.TrimStart('.'),
+            _ => extension.TrimStart('.')
         };
     }
 

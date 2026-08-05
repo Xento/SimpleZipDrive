@@ -367,7 +367,7 @@ public class WinFspMountServiceAdditionalTests : IDisposable
     {
         var method = typeof(MountService).GetMethod("GetMountStatusErrorMessage",
             BindingFlags.NonPublic | BindingFlags.Static)!;
-        return (string)method.Invoke(null, new object[] { statusCode })!;
+        return (string)method.Invoke(null, [statusCode])!;
     }
 
     [Theory]

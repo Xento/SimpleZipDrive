@@ -236,7 +236,9 @@ public class RegexCacheAndHelpersEdgeCaseTests
 
     private class TestDataErrorException : Exception
     {
-        public TestDataErrorException(string message) : base(message) { }
+        public TestDataErrorException(string message) : base(message)
+        {
+        }
     }
 
     // ─── GenerateTempDirectoryName: format validation ───

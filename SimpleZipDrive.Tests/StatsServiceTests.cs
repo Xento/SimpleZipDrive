@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Reflection;
 using SimpleZipDrive.Core.Services;
 
 namespace SimpleZipDrive.Tests;
@@ -174,8 +175,12 @@ public class StatsServiceTests
         await service.ReportStatsAsync();
 
         Assert.NotNull(handler.LastContentBody);
-        Assert.Contains("testhost", handler.LastContentBody);
-        Assert.Contains("applicationId", handler.LastContentBody);
+        // applicationId is derived from the entry assembly of the running process,
+        // which varies by test runner (e.g. "testhost" under dotnet test,
+        // "ReSharperTestRunner" under ReSharper/Rider). Assert the contract instead
+        // of a runner-specific literal.
+        var expectedApplicationId = Assembly.GetEntryAssembly()?.GetName().Name ?? "SimpleZipDrive";
+        Assert.Contains($"\"applicationId\":\"{expectedApplicationId}\"", handler.LastContentBody);
         Assert.Contains("version", handler.LastContentBody);
 
         service.Dispose();

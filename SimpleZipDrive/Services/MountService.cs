@@ -146,7 +146,10 @@ public class MountService : IDisposable, IMountService
     }
 
     /// <inheritdoc />
-    public string GetArchiveType(string filePath) => ArchiveFormats.GetArchiveType(filePath);
+    public string GetArchiveType(string filePath)
+    {
+        return ArchiveFormats.GetArchiveType(filePath);
+    }
 
     /// <inheritdoc />
     public void Dispose()
@@ -361,7 +364,7 @@ public class MountService : IDisposable, IMountService
                         options.MountPoint = mountPoint;
                     });
 
-                for (var attempt = 0; ; attempt++)
+                for (var attempt = 0;; attempt++)
                 {
                     try
                     {

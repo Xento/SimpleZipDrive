@@ -49,6 +49,11 @@
 
     <ItemGroup>
         <PackageReference Include="SharpCompress" Version="0.50.3" />
-        <PackageReference Include="winfsp.net" Version="2.2.26194" />
+        <!-- winfsp.net 2.1.x is built against the latest STABLE WinFsp release (2.1.25156).
+             The interop version check accepts any native WinFsp with matching major version
+             (2) and minor >= the interop's minor, so 2.1 interop supports native 2.1 (stable)
+             and 2.2+ (beta). Newer winfsp.net 2.2.x packages reject the stable native 2.1
+             driver with "incorrect dll version (need 2.2, have 2.1)". -->
+        <PackageReference Include="winfsp.net" Version="2.1.25156" />
     </ItemGroup>
 </Project>

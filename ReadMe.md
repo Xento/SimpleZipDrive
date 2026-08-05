@@ -46,7 +46,7 @@ Before running Simple Zip Drive, ensure your system meets the following requirem
 1.  **.NET 10.0 Runtime:** Download the latest [.NET Desktop Runtime](https://dotnet.microsoft.com/download).
 2.  **Filesystem Driver** (depends on which variant you use):
     *   **For SimpleZipDrive (Dokan):** Download and install the latest `DokanSetup.exe` from the [Official Releases](https://github.com/dokan-dev/dokany/releases).
-    *   **For SimpleZipDrive_WinFsp:** Download and install [WinFsp](https://github.com/winfsp/winfsp/releases).
+    *   **For SimpleZipDrive_WinFsp:** Download and install [WinFsp](https://github.com/winfsp/winfsp/releases) **2.1 or later** (2.1 is the latest stable release; 2.2+ are beta versions).
 
 ---
 

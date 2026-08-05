@@ -336,18 +336,30 @@ public class WinFspEdgeCaseTests : IDisposable
                 crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
             }
         }
+
         return ~crc;
     }
 
     private sealed class TempFileDeleter : IDisposable
     {
         private readonly string _path;
+
         public TempFileDeleter(string path)
         {
             _path = path;
         }
 
-        public void Dispose() { try { File.Delete(_path); } catch { /* ignored */ } }
+        public void Dispose()
+        {
+            try
+            {
+                File.Delete(_path);
+            }
+            catch
+            {
+                /* ignored */
+            }
+        }
     }
 
     private static class Marshal
@@ -372,8 +384,16 @@ public class WinFspEdgeCaseTests : IDisposable
     {
         foreach (var d in _disposables)
         {
-            try { d.Dispose(); } catch { /* best effort */ }
+            try
+            {
+                d.Dispose();
+            }
+            catch
+            {
+                /* best effort */
+            }
         }
+
         GC.SuppressFinalize(this);
     }
 }

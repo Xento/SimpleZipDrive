@@ -812,7 +812,10 @@ public class ZipFileSystemCore : IDisposable
                 {
                     entrySemaphore.Release();
                 }
-                catch (ObjectDisposedException) { /* Disposed during shutdown */ }
+                catch (ObjectDisposedException)
+                {
+                    /* Disposed during shutdown */
+                }
             }
         }
 
@@ -968,11 +971,11 @@ public class ZipFileSystemCore : IDisposable
         var source = ex.Source ?? string.Empty;
         var stackTrace = ex.StackTrace ?? string.Empty;
         return source.Contains("SharpCompress", StringComparison.OrdinalIgnoreCase)
-            || source.Contains("SevenZip", StringComparison.OrdinalIgnoreCase)
-            || source.Contains("zlib", StringComparison.OrdinalIgnoreCase)
-            || source.Contains("Zstd", StringComparison.OrdinalIgnoreCase)
-            || stackTrace.Contains("SharpCompress", StringComparison.OrdinalIgnoreCase)
-            || stackTrace.Contains("SevenZip", StringComparison.OrdinalIgnoreCase);
+               || source.Contains("SevenZip", StringComparison.OrdinalIgnoreCase)
+               || source.Contains("zlib", StringComparison.OrdinalIgnoreCase)
+               || source.Contains("Zstd", StringComparison.OrdinalIgnoreCase)
+               || stackTrace.Contains("SharpCompress", StringComparison.OrdinalIgnoreCase)
+               || stackTrace.Contains("SevenZip", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

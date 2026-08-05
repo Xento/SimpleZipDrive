@@ -381,6 +381,7 @@ public sealed class ZipFs : FileSystemBase, IDisposable
             {
                 Core.AddFailedEntry(node.NormalizedPath);
             }
+
             DiagnosticLogger.LogOperation("Read", $"Offset={Offset}, Length={Length}", STATUS_UNSUCCESSFUL, $"{ex.GetType().Name}: {ex.Message}");
             _logErrorAction(ex, $"ZipFs.Read: EXCEPTION reading from stream, Offset={Offset}.");
             return STATUS_UNSUCCESSFUL;

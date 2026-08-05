@@ -453,10 +453,9 @@ public class WinFspZipFsTests : IDisposable
 
         var result = WinFspZipFs.EntryNodeToFileInfo(node);
 
-        var fi = result;
-        Assert.Equal(1024ul, fi.FileSize);
-        Assert.Equal((uint)(FileAttributes.Archive | FileAttributes.ReadOnly), fi.FileAttributes);
-        Assert.NotEqual(0ul, fi.AllocationSize);
+        Assert.Equal(1024ul, result.FileSize);
+        Assert.Equal((uint)(FileAttributes.Archive | FileAttributes.ReadOnly), result.FileAttributes);
+        Assert.NotEqual(0ul, result.AllocationSize);
     }
 
     [Fact]
@@ -475,10 +474,9 @@ public class WinFspZipFsTests : IDisposable
 
         var result = WinFspZipFs.EntryNodeToFileInfo(node);
 
-        var fi = result;
-        Assert.Equal(0ul, fi.FileSize);
-        Assert.Equal((uint)FileAttributes.Directory, fi.FileAttributes);
-        Assert.Equal(0ul, fi.AllocationSize);
+        Assert.Equal(0ul, result.FileSize);
+        Assert.Equal((uint)FileAttributes.Directory, result.FileAttributes);
+        Assert.Equal(0ul, result.AllocationSize);
     }
 
     // ─── IsDirectory tests (private static) ───
