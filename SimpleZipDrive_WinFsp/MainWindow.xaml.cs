@@ -156,7 +156,7 @@ public partial class MainWindow : IDisposable
             _loggingService.LogError($"{AppTheme.Section("INVALID FILE TYPE")}");
             _loggingService.LogError($"Error: The file '{Path.GetFileName(zipFilePath)}' is not a supported archive.");
             _loggingService.LogError($"Detected extension: '{Path.GetExtension(zipFilePath)}' (expected: {ArchiveFormats.SupportedExtensionsDescription})");
-            _loggingService.LogError("Simple Zip Drive can only mount ZIP, 7Z, RAR, and TAR archives.");
+            _loggingService.LogError("Simple Zip Drive can only mount ZIP, 7Z, RAR, TAR (including compressed variants), and comic-book archives (.cbz, .cbr, .cb7).");
             return;
         }
 

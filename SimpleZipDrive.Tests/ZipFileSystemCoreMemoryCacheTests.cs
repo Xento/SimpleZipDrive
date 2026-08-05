@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.IO.Compression;
+using System.Reflection;
 using SimpleZipDrive.Core;
 
 namespace SimpleZipDrive.Tests;
@@ -29,19 +31,20 @@ public class ZipFileSystemCoreMemoryCacheTests : IDisposable
         var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, true))
         {
-            CreateEntry(zip, "small.bin");
-            CreateEntry(zip, "other.bin");
+            CreateEntry(zip, "small.bin", EntrySize);
+            CreateEntry(zip, "other.bin", EntrySize);
+            CreateEntry(zip, "third.bin", EntrySize * 2);
         }
 
         ms.Position = 0;
         return ms;
     }
 
-    private static void CreateEntry(ZipArchive zip, string name)
+    private static void CreateEntry(ZipArchive zip, string name, int size)
     {
         var entry = zip.CreateEntry(name);
         using var writer = new BinaryWriter(entry.Open());
-        var data = new byte[EntrySize];
+        var data = new byte[size];
         new Random(name.GetHashCode()).NextBytes(data);
         writer.Write(data);
     }
@@ -141,6 +144,60 @@ public class ZipFileSystemCoreMemoryCacheTests : IDisposable
         Assert.Equal(core.MaxTotalMemoryCache - 5, core.CurrentMemoryUsage);
 
         streamA2.Dispose();
+    }
+
+    [Fact]
+    public void OpenEntryStream_EntryLockDisposedDuringShutdown_ReturnsNullWithoutThrowing()
+    {
+        var core = CreateCore();
+        var entryA = core.ArchiveEntries["/small.bin"];
+        var entryB = core.ArchiveEntries["/other.bin"];
+        var entryC = core.ArchiveEntries["/third.bin"];
+
+        // Open A and B so their per-entry semaphores exist in _entryLocks.
+        var streamA = core.OpenEntryStream(entryA, "/small.bin");
+        var streamB = core.OpenEntryStream(entryB, "/other.bin");
+        Assert.NotNull(streamA);
+        Assert.NotNull(streamB);
+        streamA.Dispose();
+        streamB.Dispose();
+
+        // Simulate the Dispose() window: B's per-entry semaphore is disposed while the
+        // _entryLocks dictionary still contains it (race between the dispose loop and a
+        // concurrent open).
+        var entryLocks = (ConcurrentDictionary<string, SemaphoreSlim>)typeof(ZipFileSystemCore)
+            .GetField("_entryLocks", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(core)!;
+        entryLocks["/other.bin"].Dispose();
+
+        // Evict A and B from the memory cache under memory pressure so the next open of
+        // B misses the cache and must take the (disposed) per-entry semaphore.
+        core.CurrentMemoryUsage = core.MaxTotalMemoryCache - 5;
+        var streamC = core.OpenEntryStream(entryC, "/third.bin");
+        Assert.NotNull(streamC);
+        streamC.Dispose();
+
+        // B is no longer cached and its semaphore is disposed: both the memory and disk
+        // paths must abort gracefully instead of throwing ObjectDisposedException.
+        var ex = Record.Exception(() => core.OpenEntryStream(entryB, "/other.bin"));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void OpenEntryStream_AfterCoreDisposed_ReturnsNullWithoutThrowing()
+    {
+        var core = CreateCore();
+        var entry = core.ArchiveEntries["/small.bin"];
+
+        var stream = core.OpenEntryStream(entry, "/small.bin");
+        Assert.NotNull(stream);
+        stream.Dispose();
+
+        core.Dispose();
+
+        // Late opens during/after shutdown must fail gracefully, never throw.
+        var ex = Record.Exception(() => core.OpenEntryStream(entry, "/small.bin"));
+        Assert.Null(ex);
     }
 
     public void Dispose()

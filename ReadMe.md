@@ -25,7 +25,7 @@ Unlike traditional archive utilities that extract the entire archive to a tempor
 *   **Mount Type Choice:** Choose between drive letter or NTFS folder mounting via Settings, or use the dedicated `Mount as Drive Letter` and `Mount as Folder` menu items.
 *   **Hybrid Caching Engine:**
     *   **Stored Entries (ZIP):** Uncompressed entries are read directly from the source archive with zero-copy, zero-cache performance — no RAM or disk overhead.
-    *   **Small Files:** Cached in-memory for near-instantaneous access.
+    *   **Small Files:** Cached in-memory for near-instantaneous access. Each file is decompressed only once and the buffer is shared across all open handles, so memory usage stays at approximately one copy per file regardless of how many applications access it.
     *   **Large Files (≥512 MB by default):** Automatically offloaded to a temporary disk cache to prevent RAM exhaustion. The per-file memory threshold can be adjusted via the Settings window.
 *   **Streaming Architecture:** The source archive is accessed via a direct file stream, supporting archives of virtually any size.
 *   **Zero-Configuration UI:** Supports drag-and-drop functionality for automatic mounting to the first available drive letter (M-Q). The mounted drive label displays the archive filename.
@@ -131,7 +131,7 @@ Press `F8` at any time to capture the active window. The image is saved as a PNG
 | **Dokan Initialization Failed**   | Ensure the Dokan driver is installed and you have restarted your PC after installation. The app detects missing drivers and offers to open the download page automatically. |
 | **WinFsp Not Found**              | Install WinFsp from [GitHub](https://github.com/winfsp/winfsp/releases). The app detects missing drivers and offers to open the download page automatically. |
 | **Drive Letter in Use**           | Specify a different drive letter via CLI or ensure letters M-Q are not mapped to network shares.                              |
-| **Out of Memory**                 | Occurs if too many large files are opened simultaneously. Close applications accessing the virtual drive to free up cache.    |
+| **Out of Memory**                 | Occurs if too many large files are opened simultaneously. Close applications accessing the virtual drive to free up cache, or unmount the drive to release all cached memory.    |
 | **Archive File Error**            | Simple Zip Drive supports standard ZIP, 7Z, RAR, TAR, and compressed TAR formats (.tar.gz, .tar.bz2, .tar.xz), plus comic-book archives (.cbz, .cbr, .cb7). Other formats like `.gz` or `.bz2` (without tar) are not supported.        |
 | **Password Prompt Not Appearing** | Some encrypted archives may use unsupported encryption methods. Ensure your archive uses standard ZIP, 7Z, or RAR encryption. |
 | **Drive invisible to elevated/standard processes** | This is Windows UAC isolation. Enable `Settings > Security Settings > Cross-integrity mount` (WinFsp only). When running as Administrator, this is enforced automatically. |

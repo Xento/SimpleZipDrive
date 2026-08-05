@@ -677,8 +677,19 @@ public class ZipFileSystemCore : IDisposable
                 return stream;
         }
 
-        var entrySemaphore = _entryLocks.GetOrAdd(normalizedPath, static _ => new SemaphoreSlim(1, 1));
-        entrySemaphore.Wait();
+        SemaphoreSlim entrySemaphore;
+        try
+        {
+            entrySemaphore = _entryLocks.GetOrAdd(normalizedPath, static _ => new SemaphoreSlim(1, 1));
+            entrySemaphore.Wait();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The core is being disposed during shutdown; abort the acquire gracefully
+            // so the caller falls back to disk caching (which also fails cleanly).
+            return null;
+        }
+
         try
         {
             lock (_memoryLock)
@@ -718,7 +729,14 @@ public class ZipFileSystemCore : IDisposable
         }
         finally
         {
-            entrySemaphore.Release();
+            try
+            {
+                entrySemaphore.Release();
+            }
+            catch (ObjectDisposedException)
+            {
+                /* Disposed during shutdown */
+            }
         }
     }
 
@@ -793,8 +811,18 @@ public class ZipFileSystemCore : IDisposable
         }
         else
         {
-            var entrySemaphore = _entryLocks.GetOrAdd(normalizedPath, static _ => new SemaphoreSlim(1, 1));
-            entrySemaphore.Wait();
+            SemaphoreSlim entrySemaphore;
+            try
+            {
+                entrySemaphore = _entryLocks.GetOrAdd(normalizedPath, static _ => new SemaphoreSlim(1, 1));
+                entrySemaphore.Wait();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The core is being disposed during shutdown; abort the extraction gracefully.
+                return null;
+            }
+
             try
             {
                 // Double-check after acquiring per-entry lock.
