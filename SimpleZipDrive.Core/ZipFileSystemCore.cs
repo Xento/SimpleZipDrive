@@ -42,6 +42,11 @@ public class ZipFileSystemCore : IDisposable
     internal long CurrentMemoryUsage;
     private readonly object _memoryLock = new();
 
+    // Shared memory cache for decompressed entries: one decompressed buffer per entry,
+    // shared by all open streams (refcounted). Buffers stay warm after the last handle
+    // closes and are evicted (LRU) only when the total cache limit would be exceeded.
+    private readonly Dictionary<string, MemoryEntryCacheEntry> _memoryEntryCache = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly Func<string?> _passwordProvider;
     private readonly SevenZipFallback? _sevenZipFallback;
     private readonly string? _archiveFilePath;
@@ -615,37 +620,22 @@ public class ZipFileSystemCore : IDisposable
             return OpenDiskCachedStream(entry, normalizedPath, entrySize, true);
         }
 
-        // Small file: check memory limit.
-        bool useDiskCache;
-        lock (_memoryLock)
-        {
-            var projectedMemoryUsage = CurrentMemoryUsage + entrySize;
-            useDiskCache = projectedMemoryUsage > MaxTotalMemoryCache;
-        }
-
-        if (useDiskCache)
-        {
-            LogMessage($"Memory limit approaching. Using disk cache for small file '{normalizedPath}' ({entrySize / 1024.0 / 1024.0:F2} MB).");
-            return OpenDiskCachedStream(entry, normalizedPath, entrySize, false);
-        }
-
-        // Small file: cache in memory.
-        byte[] entryBytes;
+        // Small file: cache in memory as a shared, refcounted buffer (decompressed once per
+        // entry regardless of how many handles are opened concurrently or on demand).
+        SharedMemoryStream? sharedStream;
         try
         {
-            lock (_archiveLock)
+            sharedStream = AcquireSharedMemoryStream(normalizedPath, entrySize, () =>
             {
-                using var entryStream = entry.OpenEntryStream();
-                var capacity = entrySize > 0 ? (int)Math.Min(entrySize, int.MaxValue) : 4096;
-                using var tempMs = new MemoryStream(capacity);
-                entryStream.CopyTo(tempMs);
-                entryBytes = tempMs.ToArray();
-            }
-        }
-        catch (OutOfMemoryException)
-        {
-            LogMessage($"Memory cache exhausted for '{normalizedPath}': falling back to disk cache.");
-            return OpenDiskCachedStream(entry, normalizedPath, entrySize, false);
+                lock (_archiveLock)
+                {
+                    using var entryStream = entry.OpenEntryStream();
+                    var capacity = entrySize > 0 ? (int)Math.Min(entrySize, int.MaxValue) : 4096;
+                    using var tempMs = new MemoryStream(capacity);
+                    entryStream.CopyTo(tempMs);
+                    return tempMs.ToArray();
+                }
+            });
         }
         catch (Exception ex)
         {
@@ -661,22 +651,129 @@ public class ZipFileSystemCore : IDisposable
             return null;
         }
 
-        lock (_memoryLock)
+        if (sharedStream == null)
         {
-            CurrentMemoryUsage += entryBytes.Length;
+            // Memory cache limit reached (or decompression ran out of memory): use disk cache.
+            LogMessage($"Memory limit approaching. Using disk cache for small file '{normalizedPath}' ({entrySize / 1024.0 / 1024.0:F2} MB).");
+            return OpenDiskCachedStream(entry, normalizedPath, entrySize, false);
         }
 
-        return new TrackedMemoryStream(entryBytes, _memoryLock, size =>
+        LogMessage($"Memory cache: '{normalizedPath}' ({entrySize / 1024.0 / 1024.0:F2} MB) opened from shared cache.");
+        LogMessage("");
+        return sharedStream;
+    }
+
+    /// <summary>
+    /// Acquires a stream over the shared in-memory copy of the entry, decompressing it on first
+    /// use via <paramref name="decompress"/>. Concurrent and repeated opens share the single
+    /// decompressed buffer (refcounted). Returns null when the total memory cache limit would
+    /// be exceeded or decompression ran out of memory (caller falls back to disk caching).
+    /// </summary>
+    private SharedMemoryStream? AcquireSharedMemoryStream(string normalizedPath, long entrySize, Func<byte[]> decompress)
+    {
+        lock (_memoryLock)
+        {
+            if (TryAcquireCached(normalizedPath, out var stream))
+                return stream;
+        }
+
+        var entrySemaphore = _entryLocks.GetOrAdd(normalizedPath, static _ => new SemaphoreSlim(1, 1));
+        entrySemaphore.Wait();
+        try
         {
             lock (_memoryLock)
             {
-                CurrentMemoryUsage -= size;
-                if (CurrentMemoryUsage < 0)
-                {
-                    CurrentMemoryUsage = 0;
-                }
+                if (TryAcquireCached(normalizedPath, out var stream))
+                    return stream;
+
+                EvictColdMemoryEntries(entrySize);
+
+                if (CurrentMemoryUsage + entrySize > MaxTotalMemoryCache)
+                    return null;
             }
-        });
+
+            byte[] entryBytes;
+            try
+            {
+                entryBytes = decompress();
+            }
+            catch (OutOfMemoryException)
+            {
+                // Caller falls back to disk caching.
+                return null;
+            }
+
+            lock (_memoryLock)
+            {
+                if (TryAcquireCached(normalizedPath, out var stream))
+                    return stream;
+
+                var entry = new MemoryEntryCacheEntry { Buffer = entryBytes, Size = entryBytes.Length };
+                entry.RefCount = 1;
+                entry.LastUsed = Environment.TickCount64;
+                _memoryEntryCache[normalizedPath] = entry;
+                CurrentMemoryUsage += entryBytes.Length;
+                return new SharedMemoryStream(entryBytes, () => ReleaseMemoryEntry(normalizedPath));
+            }
+        }
+        finally
+        {
+            entrySemaphore.Release();
+        }
+    }
+
+    private bool TryAcquireCached(string normalizedPath, out SharedMemoryStream? stream)
+    {
+        stream = null;
+        if (!_memoryEntryCache.TryGetValue(normalizedPath, out var entry))
+            return false;
+
+        entry.RefCount++;
+        entry.LastUsed = Environment.TickCount64;
+        stream = new SharedMemoryStream(entry.Buffer, () => ReleaseMemoryEntry(normalizedPath));
+        return true;
+    }
+
+    private void ReleaseMemoryEntry(string normalizedPath)
+    {
+        lock (_memoryLock)
+        {
+            if (!_memoryEntryCache.TryGetValue(normalizedPath, out var entry))
+                return;
+
+            if (entry.RefCount > 0)
+            {
+                entry.RefCount--;
+            }
+
+            entry.LastUsed = Environment.TickCount64;
+            // The buffer stays warm in the cache (RefCount == 0) until memory pressure evicts
+            // it, so repeated opens and on-demand reads reuse the single decompressed copy.
+        }
+    }
+
+    private void EvictColdMemoryEntries(long requiredBytes)
+    {
+        if (CurrentMemoryUsage + requiredBytes <= MaxTotalMemoryCache)
+            return;
+
+        var coldEntries = _memoryEntryCache
+            .Where(static kv => kv.Value.RefCount == 0)
+            .OrderBy(static kv => kv.Value.LastUsed)
+            .ToList();
+
+        foreach (var kv in coldEntries)
+        {
+            if (CurrentMemoryUsage + requiredBytes <= MaxTotalMemoryCache)
+                break;
+
+            _memoryEntryCache.Remove(kv.Key);
+            CurrentMemoryUsage -= kv.Value.Size;
+            if (CurrentMemoryUsage < 0)
+            {
+                CurrentMemoryUsage = 0;
+            }
+        }
     }
 
     private FileStream? OpenDiskCachedStream(IArchiveEntry entry, string normalizedPath, long entrySize, bool isLargeFile)
@@ -1029,27 +1126,16 @@ public class ZipFileSystemCore : IDisposable
                 return new FileStream(tempFilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
             }
 
-            // Small file: use memory cache
-            using var ms = new MemoryStream();
-            if (!_sevenZipFallback.TryExtractEntry(normalizedPath, ms))
-                return null;
-
-            var entryBytes = ms.ToArray();
-            lock (_memoryLock)
+            // Small file: use the shared memory cache.
+            return AcquireSharedMemoryStream(normalizedPath, entrySize, () =>
             {
-                CurrentMemoryUsage += entryBytes.Length;
-            }
-
-            return new TrackedMemoryStream(entryBytes, _memoryLock, size =>
-            {
-                lock (_memoryLock)
+                using var ms = new MemoryStream();
+                if (!_sevenZipFallback.TryExtractEntry(normalizedPath, ms))
                 {
-                    CurrentMemoryUsage -= size;
-                    if (CurrentMemoryUsage < 0)
-                    {
-                        CurrentMemoryUsage = 0;
-                    }
+                    throw new InvalidOperationException("SevenZip fallback extraction failed.");
                 }
+
+                return ms.ToArray();
             });
         }
         catch
@@ -1184,6 +1270,12 @@ public class ZipFileSystemCore : IDisposable
             }
 
             LargeFileCache.Clear();
+        }
+
+        lock (_memoryLock)
+        {
+            _memoryEntryCache.Clear();
+            CurrentMemoryUsage = 0;
         }
 
         foreach (var semaphore in _entryLocks.Values)

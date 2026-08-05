@@ -208,14 +208,13 @@ public class ZipFsStreamsAdditionalTests
         }
     }
 
-    // ─── TrackedMemoryStream: span-based Read ───
+    // ─── SharedMemoryStream: span-based Read ───
 
     [Fact]
-    public void TrackedMemoryStream_ReadSpan_ReturnsCorrectData()
+    public void SharedMemoryStream_ReadSpan_ReturnsCorrectData()
     {
         var data = new byte[] { 10, 20, 30, 40, 50 };
-        var memoryLock = new object();
-        using var stream = new TrackedMemoryStream(data, memoryLock, static _ => { });
+        using var stream = new SharedMemoryStream(data, () => { });
 
         var buffer = new byte[5];
         var bytesRead = stream.Read(buffer.AsSpan());
@@ -224,14 +223,13 @@ public class ZipFsStreamsAdditionalTests
         Assert.Equal(data, buffer);
     }
 
-    // ─── TrackedMemoryStream: span-based Read with offset ───
+    // ─── SharedMemoryStream: span-based Read with offset ───
 
     [Fact]
-    public void TrackedMemoryStream_ReadSpan_WithPositionOffset()
+    public void SharedMemoryStream_ReadSpan_WithPositionOffset()
     {
         var data = new byte[] { 10, 20, 30, 40, 50 };
-        var memoryLock = new object();
-        using var stream = new TrackedMemoryStream(data, memoryLock, static _ => { });
+        using var stream = new SharedMemoryStream(data, () => { });
 
         stream.Position = 2;
         var buffer = new byte[3];
@@ -243,14 +241,13 @@ public class ZipFsStreamsAdditionalTests
         Assert.Equal(50, buffer[2]);
     }
 
-    // ─── TrackedMemoryStream: span-based Read at EOF ───
+    // ─── SharedMemoryStream: span-based Read at EOF ───
 
     [Fact]
-    public void TrackedMemoryStream_ReadSpan_AtEof_ReturnsZero()
+    public void SharedMemoryStream_ReadSpan_AtEof_ReturnsZero()
     {
         var data = new byte[] { 10, 20, 30 };
-        var memoryLock = new object();
-        using var stream = new TrackedMemoryStream(data, memoryLock, static _ => { });
+        using var stream = new SharedMemoryStream(data, () => { });
 
         stream.Position = 3;
         var buffer = new byte[10];
@@ -259,26 +256,24 @@ public class ZipFsStreamsAdditionalTests
         Assert.Equal(0, bytesRead);
     }
 
-    // ─── TrackedMemoryStream: Write throws ───
+    // ─── SharedMemoryStream: Write throws ───
 
     [Fact]
-    public void TrackedMemoryStream_Write_ThrowsNotSupported()
+    public void SharedMemoryStream_Write_ThrowsNotSupported()
     {
         var data = new byte[] { 1, 2, 3 };
-        var memoryLock = new object();
-        using var stream = new TrackedMemoryStream(data, memoryLock, static _ => { });
+        using var stream = new SharedMemoryStream(data, () => { });
 
         Assert.Throws<NotSupportedException>(() => stream.Write([4], 0, 1));
     }
 
-    // ─── TrackedMemoryStream: SetLength throws ───
+    // ─── SharedMemoryStream: SetLength throws ───
 
     [Fact]
-    public void TrackedMemoryStream_SetLength_ThrowsNotSupported()
+    public void SharedMemoryStream_SetLength_ThrowsNotSupported()
     {
         var data = new byte[] { 1, 2, 3 };
-        var memoryLock = new object();
-        using var stream = new TrackedMemoryStream(data, memoryLock, static _ => { });
+        using var stream = new SharedMemoryStream(data, () => { });
 
         Assert.Throws<NotSupportedException>(() => stream.SetLength(10));
     }

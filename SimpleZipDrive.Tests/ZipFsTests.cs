@@ -874,7 +874,7 @@ public class ZipFsTests : IDisposable
     }
 
     [Fact]
-    public void TrackedMemoryStreamDisposalDecrementsMemoryUsage()
+    public void CloseFile_ReleasesHandle_KeepsWarmCache()
     {
         _zipFs.CurrentMemoryUsage = 0L;
         var before = _zipFs.CurrentMemoryUsage;
@@ -895,16 +895,13 @@ public class ZipFsTests : IDisposable
 
         _zipFs.CloseFile("\\readme.txt", info);
 
+        // The decompressed buffer stays warm in the shared cache after the last handle
+        // closes, so closing must not release the memory (it is evicted only under
+        // memory pressure or when the core is disposed).
         var afterClose = _zipFs.CurrentMemoryUsage;
-        Assert.Equal(0, afterClose);
-    }
+        Assert.Equal(afterOpen, afterClose);
 
-    [Fact]
-    public void MemoryUsageClampedToZeroOnNegative()
-    {
-        _zipFs.CurrentMemoryUsage = 100L;
-
-        var info = new FakeDokanFileInfo();
+        // Reopening reuses the warm buffer: no second decompression, no memory growth.
         _zipFs.CreateFile(
             "\\readme.txt",
             FileAccess.ReadData,
@@ -914,12 +911,53 @@ public class ZipFsTests : IDisposable
             FileAttributes.Normal,
             info);
 
-        _zipFs.CurrentMemoryUsage = -50L;
+        var afterReopen = _zipFs.CurrentMemoryUsage;
+        Assert.Equal(afterOpen, afterReopen);
 
         _zipFs.CloseFile("\\readme.txt", info);
+        _zipFs.CurrentMemoryUsage = 0L;
+    }
 
+    [Fact]
+    public void ConcurrentOpens_ShareSingleMemoryBuffer()
+    {
+        _zipFs.CurrentMemoryUsage = 0L;
+
+        var info1 = new FakeDokanFileInfo();
+        _zipFs.CreateFile(
+            "\\readme.txt",
+            FileAccess.ReadData,
+            FileShare.Read,
+            FileMode.Open,
+            FileOptions.None,
+            FileAttributes.Normal,
+            info1);
+
+        var afterFirstOpen = _zipFs.CurrentMemoryUsage;
+        Assert.True(afterFirstOpen > 0);
+
+        // A second concurrent handle must reuse the shared buffer, not decompress again.
+        var info2 = new FakeDokanFileInfo();
+        _zipFs.CreateFile(
+            "\\readme.txt",
+            FileAccess.ReadData,
+            FileShare.Read,
+            FileMode.Open,
+            FileOptions.None,
+            FileAttributes.Normal,
+            info2);
+
+        var afterSecondOpen = _zipFs.CurrentMemoryUsage;
+        Assert.Equal(afterFirstOpen, afterSecondOpen);
+
+        _zipFs.CloseFile("\\readme.txt", info1);
+        _zipFs.CloseFile("\\readme.txt", info2);
+
+        // Warm cache: closing all handles does not release the buffer.
         var afterClose = _zipFs.CurrentMemoryUsage;
-        Assert.Equal(0, afterClose);
+        Assert.Equal(afterFirstOpen, afterClose);
+
+        _zipFs.CurrentMemoryUsage = 0L;
     }
 
     private static MemoryStream CreateMixedDirectoryZipStream()

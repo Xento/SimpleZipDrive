@@ -4,14 +4,13 @@ namespace SimpleZipDrive.Tests;
 
 public class ZipFsStreamsTests
 {
-    // ─── TrackedMemoryStream tests ───
+    // ─── SharedMemoryStream tests ───
 
     [Fact]
-    public void TrackedMemoryStream_ReadReturnsCorrectData()
+    public void SharedMemoryStream_ReadReturnsCorrectData()
     {
         var data = new byte[] { 1, 2, 3, 4, 5 };
-        var memoryLock = new object();
-        using var stream = new TrackedMemoryStream(data, memoryLock, static _ => { });
+        using var stream = new SharedMemoryStream(data, () => { });
 
         var buffer = new byte[5];
         var bytesRead = stream.Read(buffer, 0, 5);
@@ -21,11 +20,10 @@ public class ZipFsStreamsTests
     }
 
     [Fact]
-    public void TrackedMemoryStream_ReadWithOffsetWorks()
+    public void SharedMemoryStream_ReadWithOffsetWorks()
     {
         var data = new byte[] { 10, 20, 30, 40, 50 };
-        var memoryLock = new object();
-        using var stream = new TrackedMemoryStream(data, memoryLock, static _ => { });
+        using var stream = new SharedMemoryStream(data, () => { });
 
         stream.Position = 2;
         var buffer = new byte[3];
@@ -38,25 +36,23 @@ public class ZipFsStreamsTests
     }
 
     [Fact]
-    public void TrackedMemoryStream_DisposeCallsCallback()
+    public void SharedMemoryStream_DisposeCallsCallback()
     {
         var data = new byte[] { 1, 2, 3 };
-        var memoryLock = new object();
-        var callbackSize = -1;
-        var stream = new TrackedMemoryStream(data, memoryLock, size => { callbackSize = size; });
+        var callbackInvoked = false;
+        var stream = new SharedMemoryStream(data, () => { callbackInvoked = true; });
 
         stream.Dispose();
 
-        Assert.Equal(3, callbackSize);
+        Assert.True(callbackInvoked);
     }
 
     [Fact]
-    public void TrackedMemoryStream_DoubleDisposeCallsCallbackOnce()
+    public void SharedMemoryStream_DoubleDisposeCallsCallbackOnce()
     {
         var data = new byte[] { 1, 2, 3 };
-        var memoryLock = new object();
         var callCount = 0;
-        var stream = new TrackedMemoryStream(data, memoryLock, _ => { callCount++; });
+        var stream = new SharedMemoryStream(data, () => { callCount++; });
 
         stream.Dispose();
         stream.Dispose();
@@ -65,57 +61,47 @@ public class ZipFsStreamsTests
     }
 
     [Fact]
-    public void TrackedMemoryStream_CanReadIsTrue()
+    public void SharedMemoryStream_CanReadIsTrue()
     {
         var data = new byte[] { 1 };
-        var memoryLock = new object();
-        using var stream = new TrackedMemoryStream(data, memoryLock, static _ => { });
+        using var stream = new SharedMemoryStream(data, () => { });
 
         Assert.True(stream.CanRead);
     }
 
     [Fact]
-    public void TrackedMemoryStream_CanSeekIsTrue()
+    public void SharedMemoryStream_CanSeekIsTrue()
     {
         var data = new byte[] { 1 };
-        var memoryLock = new object();
-        using var stream = new TrackedMemoryStream(data, memoryLock, static _ => { });
+        using var stream = new SharedMemoryStream(data, () => { });
 
         Assert.True(stream.CanSeek);
     }
 
     [Fact]
-    public void TrackedMemoryStream_CanWriteIsFalse()
+    public void SharedMemoryStream_CanWriteIsFalse()
     {
         var data = new byte[] { 1 };
-        var memoryLock = new object();
-        using var stream = new TrackedMemoryStream(data, memoryLock, static _ => { });
+        using var stream = new SharedMemoryStream(data, () => { });
 
         Assert.False(stream.CanWrite);
     }
 
     [Fact]
-    public void TrackedMemoryStream_LengthMatchesBuffer()
+    public void SharedMemoryStream_LengthMatchesBuffer()
     {
         var data = new byte[] { 1, 2, 3, 4 };
-        var memoryLock = new object();
-        using var stream = new TrackedMemoryStream(data, memoryLock, static _ => { });
+        using var stream = new SharedMemoryStream(data, () => { });
 
         Assert.Equal(4, stream.Length);
     }
 
     [Fact]
-    public void TrackedMemoryStream_DisposeWithLockContention()
+    public void SharedMemoryStream_DisposeInvokesCallback()
     {
         var data = new byte[] { 1, 2, 3 };
-        var memoryLock = new object();
         var callbackInvoked = false;
-        var stream = new TrackedMemoryStream(data, memoryLock, _ => { callbackInvoked = true; });
-
-        lock (memoryLock)
-        {
-            // Holding the lock - dispose should still work (it acquires the lock internally)
-        }
+        var stream = new SharedMemoryStream(data, () => { callbackInvoked = true; });
 
         stream.Dispose();
         Assert.True(callbackInvoked);

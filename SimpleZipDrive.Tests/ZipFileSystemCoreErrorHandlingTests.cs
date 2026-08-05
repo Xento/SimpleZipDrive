@@ -368,7 +368,10 @@ public class ZipFileSystemCoreErrorHandlingTests : IDisposable
         Assert.True(core.CurrentMemoryUsage > 0);
 
         stream.Dispose();
-        Assert.Equal(0, core.CurrentMemoryUsage);
+
+        // The buffer stays warm in the shared cache after the last handle closes;
+        // it is evicted only under memory pressure or when the core is disposed.
+        Assert.True(core.CurrentMemoryUsage > 0);
     }
 
     // ─── ValidatePathLength: boundary values ───

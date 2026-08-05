@@ -714,10 +714,10 @@ public class WinFspZipFsTests : IDisposable
         Assert.Equal(StatusObjectNameNotFound, result);
     }
 
-    // ─── TrackedMemoryStream disposal test ───
+    // ─── Shared memory cache: close keeps warm cache, reopen reuses buffer ───
 
     [Fact]
-    public void OpenOrCreateFile_Close_DecrementsMemoryUsage()
+    public void OpenOrCreateFile_Close_KeepsWarmCache_ReopenReusesBuffer()
     {
         _zipFs.Core.CurrentMemoryUsage = 0L;
 
@@ -728,8 +728,18 @@ public class WinFspZipFsTests : IDisposable
 
         InvokeClose(fileNode, fileDesc);
 
+        // The decompressed buffer stays warm in the shared cache after the last handle
+        // closes; it is evicted only under memory pressure or when the core is disposed.
         var afterClose = _zipFs.Core.CurrentMemoryUsage;
-        Assert.Equal(0, afterClose);
+        Assert.Equal(afterOpen, afterClose);
+
+        // Reopening reuses the warm buffer: no second decompression, no memory growth.
+        InvokeOpenOrCreateFile("\\readme.txt", out var fileNode2, out var fileDesc2, out _, out _);
+        var afterReopen = _zipFs.Core.CurrentMemoryUsage;
+        Assert.Equal(afterOpen, afterReopen);
+
+        InvokeClose(fileNode2, fileDesc2);
+        _zipFs.Core.CurrentMemoryUsage = 0L;
     }
 
     // ─── Memory throttling test ───

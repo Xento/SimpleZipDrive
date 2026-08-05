@@ -3,41 +3,99 @@ using Microsoft.Win32.SafeHandles;
 namespace SimpleZipDrive.Core;
 
 /// <summary>
-/// A MemoryStream wrapper that tracks memory usage and invokes a callback when disposed.
-/// Used to prevent unbounded memory consumption when many small files are opened.
+/// A read-only stream over a shared, cached decompressed entry buffer.
+/// Every open of the same archive entry gets its own stream instance with an independent
+/// position, but all instances share the single underlying <see cref="byte"/>[] so the entry
+/// is decompressed only once regardless of how many handles (or on-demand reads) are active.
+/// Disposing the stream releases the caller's reference; the buffer stays warm in the cache
+/// until it is evicted under memory pressure or the owning core is disposed.
 /// </summary>
-internal sealed class TrackedMemoryStream : MemoryStream
+internal sealed class SharedMemoryStream : Stream
 {
-    private readonly object _memoryLock;
-    private readonly Action<int> _onDispose;
-    private readonly int _size;
+    private readonly MemoryStream _inner;
+    private readonly Action _onDispose;
     private bool _disposed;
 
-    public TrackedMemoryStream(byte[] buffer, object memoryLock, Action<int> onDispose) : base(buffer, false)
+    public SharedMemoryStream(byte[] buffer, Action onDispose)
     {
-        _memoryLock = memoryLock;
+        _inner = new MemoryStream(buffer, false);
         _onDispose = onDispose;
-        _size = buffer.Length;
-        _disposed = false;
+    }
+
+    public override bool CanRead => true;
+
+    public override bool CanSeek => true;
+
+    public override bool CanWrite => false;
+
+    public override long Length => _inner.Length;
+
+    public override long Position
+    {
+        get => _inner.Position;
+        set => _inner.Position = value;
+    }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        return _inner.Read(buffer, offset, count);
+    }
+
+    public override int Read(Span<byte> buffer)
+    {
+        return _inner.Read(buffer);
+    }
+
+    public override long Seek(long offset, SeekOrigin origin)
+    {
+        return _inner.Seek(offset, origin);
+    }
+
+    public override void SetLength(long value)
+    {
+        throw new NotSupportedException();
+    }
+
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        throw new NotSupportedException();
+    }
+
+    public override void Flush()
+    {
     }
 
     protected override void Dispose(bool disposing)
     {
         if (!_disposed)
         {
+            _disposed = true;
             if (disposing)
             {
-                lock (_memoryLock)
-                {
-                    _onDispose(_size);
-                }
+                _onDispose();
             }
-
-            _disposed = true;
         }
 
+        _inner.Dispose();
         base.Dispose(disposing);
     }
+}
+
+/// <summary>
+/// A decompressed entry buffer shared by all open streams of the same archive entry.
+/// <see cref="RefCount"/> tracks active opens; buffers with <see cref="RefCount"/> == 0 stay
+/// warm in the memory cache and are evicted (LRU by <see cref="LastUsed"/>) only when a new
+/// allocation would exceed the total memory cache limit.
+/// </summary>
+internal sealed class MemoryEntryCacheEntry
+{
+    public required byte[] Buffer { get; init; }
+
+    public required int Size { get; init; }
+
+    public int RefCount;
+
+    public long LastUsed;
 }
 
 /// <summary>
