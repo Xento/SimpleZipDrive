@@ -12,9 +12,15 @@ namespace SimpleZipDrive.Core.Services;
 /// </summary>
 public partial class UpdateService : IUpdateService
 {
-    private const string RepoOwner = "drpetersonfernandes";
+    private const string PrimaryRepoOwner = "purelogiccode";
+    private const string FallbackRepoOwner = "drpetersonfernandes";
     private const string RepoName = "SimpleZipDrive";
-    internal const string LatestApiUrl = $"https://api.github.com/repos/{RepoOwner}/{RepoName}/releases/latest";
+
+    /// <summary>Primary release-check endpoint (new repo owner).</summary>
+    internal const string PrimaryLatestApiUrl = $"https://api.github.com/repos/{PrimaryRepoOwner}/{RepoName}/releases/latest";
+
+    /// <summary>Fallback release-check endpoint used while the repository transfer to the new owner is in flight.</summary>
+    internal const string FallbackLatestApiUrl = $"https://api.github.com/repos/{FallbackRepoOwner}/{RepoName}/releases/latest";
 
     private static readonly SocketsHttpHandler DefaultHttpHandler = new()
     {
@@ -85,15 +91,17 @@ public partial class UpdateService : IUpdateService
                           ?? new Version(0, 0, 0, 0);
 
             var client = GetHttpClient();
-            using var resp = await client.GetAsync(LatestApiUrl, cancellationToken);
-            if (!resp.IsSuccessStatusCode) return;
 
-            await using var jsonStream = await resp.Content.ReadAsStreamAsync(cancellationToken);
-            using var doc = await JsonDocument.ParseAsync(jsonStream, cancellationToken: cancellationToken);
+            // Prefer the new repo owner. If that endpoint does not resolve (e.g. the repository
+            // transfer has not completed yet), fall back to the previous owner's endpoint.
+            // Network-level failures are not retried against the fallback: if the machine is
+            // offline, both endpoints would fail and retrying would only double the wait time.
+            var release = await TryGetLatestReleaseAsync(client, PrimaryLatestApiUrl, cancellationToken)
+                          ?? await TryGetLatestReleaseAsync(client, FallbackLatestApiUrl, cancellationToken);
 
-            var tagName = doc.RootElement.GetProperty("tag_name").GetString();
-            var htmlUrl = doc.RootElement.GetProperty("html_url").GetString();
-            if (tagName is null || htmlUrl is null) return;
+            if (release is null) return;
+
+            var (tagName, htmlUrl) = release.Value;
 
             var m = VersionRegex().Match(tagName);
             if (!m.Success) return;
@@ -117,6 +125,27 @@ public partial class UpdateService : IUpdateService
         {
             await ErrorLoggerStatic.LogErrorAsync(ex, "UpdateService.CheckForUpdateAsync", cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Fetches and parses the latest release payload from the given GitHub API endpoint.
+    /// Returns <see langword="null"/> when the endpoint reports a non-success status or the
+    /// payload lacks required fields; network-level exceptions propagate to the caller.
+    /// </summary>
+    private static async Task<(string TagName, string HtmlUrl)?> TryGetLatestReleaseAsync(
+        HttpClient client, string url, CancellationToken cancellationToken)
+    {
+        using var resp = await client.GetAsync(url, cancellationToken);
+        if (!resp.IsSuccessStatusCode) return null;
+
+        await using var jsonStream = await resp.Content.ReadAsStreamAsync(cancellationToken);
+        using var doc = await JsonDocument.ParseAsync(jsonStream, cancellationToken: cancellationToken);
+
+        var tagName = doc.RootElement.GetProperty("tag_name").GetString();
+        var htmlUrl = doc.RootElement.GetProperty("html_url").GetString();
+        if (tagName is null || htmlUrl is null) return null;
+
+        return (tagName, htmlUrl);
     }
 
     [GeneratedRegex(@"\d+\.\d+\.\d+", RegexOptions.Compiled)]

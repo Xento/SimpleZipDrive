@@ -33,7 +33,7 @@ public class WinFspUpdateServiceIntegrationTests
         return new HttpClient(handler);
     }
 
-    private static string CreateGitHubReleaseJson(string tagName, string htmlUrl = "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/test")
+    private static string CreateGitHubReleaseJson(string tagName, string htmlUrl = "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/test")
     {
         return JsonSerializer.Serialize(new
         {
@@ -53,7 +53,7 @@ public class WinFspUpdateServiceIntegrationTests
     {
         // Arrange - use a version that's definitely higher than the current assembly version
         const string tagName = "release_99.0.1";
-        const string htmlUrl = $"https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/{tagName}";
+        const string htmlUrl = $"https://github.com/purelogiccode/SimpleZipDrive/releases/tag/{tagName}";
         var json = CreateGitHubReleaseJson(tagName, htmlUrl);
 
         using var httpClient = CreateMockHttpClient(json);
@@ -73,7 +73,7 @@ public class WinFspUpdateServiceIntegrationTests
     {
         // Arrange
         const string tagName = "release_99.0.0";
-        const string htmlUrl = $"https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/{tagName}";
+        const string htmlUrl = $"https://github.com/purelogiccode/SimpleZipDrive/releases/tag/{tagName}";
         var json = CreateGitHubReleaseJson(tagName, htmlUrl);
 
         using var httpClient = CreateMockHttpClient(json);
@@ -92,7 +92,7 @@ public class WinFspUpdateServiceIntegrationTests
     {
         // Arrange - use a version that's definitely higher than the current assembly version
         const string tagName = "v99.1.0";
-        const string htmlUrl = $"https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/{tagName}";
+        const string htmlUrl = $"https://github.com/purelogiccode/SimpleZipDrive/releases/tag/{tagName}";
         var json = CreateGitHubReleaseJson(tagName, htmlUrl);
 
         using var httpClient = CreateMockHttpClient(json);

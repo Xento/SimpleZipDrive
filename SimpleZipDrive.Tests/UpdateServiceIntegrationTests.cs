@@ -33,7 +33,7 @@ public class UpdateServiceIntegrationTests
         return new HttpClient(handler);
     }
 
-    private static string CreateGitHubReleaseJson(string tagName, string htmlUrl = "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/test")
+    private static string CreateGitHubReleaseJson(string tagName, string htmlUrl = "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/test")
     {
         return JsonSerializer.Serialize(new
         {
@@ -53,7 +53,7 @@ public class UpdateServiceIntegrationTests
     {
         // Arrange - use a version that's definitely higher than the current assembly version
         const string tagName = "release_99.0.1";
-        const string htmlUrl = $"https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/{tagName}";
+        const string htmlUrl = $"https://github.com/purelogiccode/SimpleZipDrive/releases/tag/{tagName}";
         var json = CreateGitHubReleaseJson(tagName, htmlUrl);
 
         using var httpClient = CreateMockHttpClient(json);
@@ -73,7 +73,7 @@ public class UpdateServiceIntegrationTests
     {
         // Arrange
         const string tagName = "release_99.0.0";
-        const string htmlUrl = $"https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/{tagName}";
+        const string htmlUrl = $"https://github.com/purelogiccode/SimpleZipDrive/releases/tag/{tagName}";
         var json = CreateGitHubReleaseJson(tagName, htmlUrl);
 
         using var httpClient = CreateMockHttpClient(json);
@@ -92,7 +92,7 @@ public class UpdateServiceIntegrationTests
     {
         // Arrange - use a version that's definitely higher than the current assembly version
         const string tagName = "v99.1.0";
-        const string htmlUrl = $"https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/{tagName}";
+        const string htmlUrl = $"https://github.com/purelogiccode/SimpleZipDrive/releases/tag/{tagName}";
         var json = CreateGitHubReleaseJson(tagName, htmlUrl);
 
         using var httpClient = CreateMockHttpClient(json);
@@ -203,6 +203,86 @@ public class UpdateServiceIntegrationTests
 
         // Assert
         Assert.False(_fakeNotificationService.ShowUpdateAvailableCalled);
+    }
+
+    #endregion
+
+    #region Primary / Fallback Repo Owner Tests
+
+    [Fact]
+    public async Task CheckForUpdateAsync_WhenPrimaryRepoNotFound_FallsBackToPreviousOwner()
+    {
+        // Arrange - primary owner (purelogiccode) has no release yet (transfer not done),
+        // fallback owner (drpetersonfernandes) still serves the latest release.
+        const string tagName = "release_99.0.1";
+        var json = CreateGitHubReleaseJson(tagName);
+        using var httpClient = new HttpClient(new RoutingMockHttpMessageHandler(new Dictionary<string, (HttpStatusCode Status, string Content)>
+        {
+            [UpdateService.PrimaryLatestApiUrl] = (HttpStatusCode.NotFound, "{}"),
+            [UpdateService.FallbackLatestApiUrl] = (HttpStatusCode.OK, json)
+        }));
+        var updateService = new UpdateService(_fakeNotificationService, httpClient);
+
+        // Act
+        await updateService.CheckForUpdateAsync(CancellationToken.None);
+
+        // Assert
+        Assert.True(_fakeNotificationService.ShowUpdateAvailableCalled);
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_WhenPrimaryRepoAvailable_DoesNotCallFallback()
+    {
+        // Arrange - primary endpoint serves the release; fallback must not be requested.
+        const string tagName = "release_99.0.1";
+        var json = CreateGitHubReleaseJson(tagName);
+        using var handler = new RoutingMockHttpMessageHandler(new Dictionary<string, (HttpStatusCode Status, string Content)>
+        {
+            [UpdateService.PrimaryLatestApiUrl] = (HttpStatusCode.OK, json)
+        });
+        var updateService = new UpdateService(_fakeNotificationService, new HttpClient(handler));
+
+        // Act
+        await updateService.CheckForUpdateAsync(CancellationToken.None);
+
+        // Assert
+        Assert.True(_fakeNotificationService.ShowUpdateAvailableCalled);
+        Assert.Equal([UpdateService.PrimaryLatestApiUrl], handler.RequestedUrls);
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_WhenBothReposUnavailable_DoesNotNotifyUser()
+    {
+        // Arrange - neither endpoint resolves to a release.
+        using var handler = new RoutingMockHttpMessageHandler(new Dictionary<string, (HttpStatusCode Status, string Content)>
+        {
+            [UpdateService.PrimaryLatestApiUrl] = (HttpStatusCode.NotFound, "{}"),
+            [UpdateService.FallbackLatestApiUrl] = (HttpStatusCode.NotFound, "{}")
+        });
+        var updateService = new UpdateService(_fakeNotificationService, new HttpClient(handler));
+
+        // Act
+        await updateService.CheckForUpdateAsync(CancellationToken.None);
+
+        // Assert
+        Assert.False(_fakeNotificationService.ShowUpdateAvailableCalled);
+        Assert.Equal(2, handler.RequestedUrls.Count);
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_WhenNetworkFailsOnPrimary_DoesNotRetryFallback()
+    {
+        // Arrange - network-level failure must not be retried against the fallback endpoint:
+        // if the machine is offline both endpoints would fail and retrying only doubles latency.
+        using var handler = new ThrowingMockHttpMessageHandler(new HttpRequestException("No such host is known."));
+        var updateService = new UpdateService(_fakeNotificationService, new HttpClient(handler));
+
+        // Act
+        await updateService.CheckForUpdateAsync(CancellationToken.None);
+
+        // Assert
+        Assert.False(_fakeNotificationService.ShowUpdateAvailableCalled);
+        Assert.Equal(1, handler.RequestCount);
     }
 
     #endregion
@@ -362,6 +442,66 @@ public class UpdateServiceIntegrationTests
             };
 
             return Task.FromResult(response);
+        }
+    }
+
+    /// <summary>
+    /// Mock handler that routes each request URL to a configured status/content pair,
+    /// recording every requested URL.
+    /// </summary>
+    private sealed class RoutingMockHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Dictionary<string, (HttpStatusCode Status, string Content)> _responses;
+
+        public List<string> RequestedUrls { get; } = [];
+
+        public RoutingMockHttpMessageHandler(Dictionary<string, (HttpStatusCode Status, string Content)> responses)
+        {
+            _responses = responses;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var url = request.RequestUri?.ToString() ?? string.Empty;
+            RequestedUrls.Add(url);
+
+            if (!_responses.TryGetValue(url, out var route))
+            {
+                Assert.Fail($"Unexpected request URL: {url}");
+            }
+
+            return Task.FromResult(new HttpResponseMessage(route.Status)
+            {
+                Content = new StringContent(route.Content)
+            });
+        }
+    }
+
+    /// <summary>
+    /// Mock handler that always throws the given exception and counts requests.
+    /// </summary>
+    private sealed class ThrowingMockHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Exception _exception;
+
+        public int RequestCount { get; private set; }
+
+        public ThrowingMockHttpMessageHandler(Exception exception)
+        {
+            _exception = exception;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RequestCount++;
+            throw _exception;
         }
     }
 

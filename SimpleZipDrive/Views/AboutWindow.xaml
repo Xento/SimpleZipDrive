@@ -64,7 +64,7 @@
             
             <TextBlock TextWrapping="Wrap" Margin="0,0,0,8">
                 <Hyperlink x:Name="GitHubLink" Click="GitHubLink_Click" ToolTip="Open project GitHub repository">
-                    https://github.com/drpetersonfernandes/SimpleZipDrive
+                    https://github.com/purelogiccode/SimpleZipDrive
                 </Hyperlink>
             </TextBlock>
             

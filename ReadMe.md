@@ -2,9 +2,9 @@
 
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)]()
 [![.NET 10.0](https://img.shields.io/badge/.NET-10.0-blue.svg)](https://dotnet.microsoft.com/download/dotnet/10.0)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-blue)](https://github.com/drpetersonfernandes/SimpleZipDrive/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20ARM64-blue)](https://github.com/purelogiccode/SimpleZipDrive/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE.txt)
-[![GitHub release](https://img.shields.io/github/v/release/drpetersonfernandes/SimpleZipDrive)](https://github.com/drpetersonfernandes/SimpleZipDrive/releases)
+[![GitHub release](https://img.shields.io/github/v/release/purelogiccode/SimpleZipDrive)](https://github.com/purelogiccode/SimpleZipDrive/releases)
 
 **Simple Zip Drive** is a high-performance, user-mode filesystem utility that allows you to mount ZIP, 7Z, RAR, and TAR archives as virtual drives or NTFS directory mount points. It provides seamless, read-only access to compressed data without the need for manual extraction.
 

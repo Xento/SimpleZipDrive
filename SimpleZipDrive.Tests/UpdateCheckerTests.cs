@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using SimpleZipDrive.Core.Services;
 using SimpleZipDrive.Tests.Fakes;
 
 namespace SimpleZipDrive.Tests;
@@ -86,7 +87,7 @@ public partial class UpdateCheckerTests
         const string jsonResponse = """
                                     {
                                                 "tag_name": "release_1.10.1",
-                                                "html_url": "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/release_1.10.1",
+                                                "html_url": "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/release_1.10.1",
                                                 "name": "Release 1.10.1",
                                                 "published_at": "2024-01-15T10:30:00Z"
                                             }
@@ -147,7 +148,7 @@ public partial class UpdateCheckerTests
     {
         var currentVersion = new Version(1, 10, 0);
         var latestVersion = new Version(1, 10, 1);
-        const string releaseUrl = "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/release_1.10.1";
+        const string releaseUrl = "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/release_1.10.1";
 
         // Verify that when an update is available, the appropriate details are generated
         Assert.True(latestVersion > currentVersion);
@@ -191,26 +192,30 @@ public partial class UpdateCheckerTests
     [Fact]
     public void RepositoryConfigurationIsValid()
     {
-        // Ensure the repository configuration points to the correct GitHub repository
-        const string expectedOwner = "drpetersonfernandes";
+        // Primary endpoint must point to the new owner; fallback keeps working while
+        // the repository transfer from the previous owner is in flight.
         const string expectedRepo = "SimpleZipDrive";
-        const string expectedApiUrl = $"https://api.github.com/repos/{expectedOwner}/{expectedRepo}/releases/latest";
 
-        // Verify URL format
-        Assert.Contains(expectedOwner, expectedApiUrl);
-        Assert.Contains(expectedRepo, expectedApiUrl);
-        Assert.StartsWith("https://api.github.com/repos/", expectedApiUrl);
-        Assert.EndsWith("/releases/latest", expectedApiUrl);
+        Assert.Equal("https://api.github.com/repos/purelogiccode/SimpleZipDrive/releases/latest", UpdateService.PrimaryLatestApiUrl);
+        Assert.Contains(expectedRepo, UpdateService.PrimaryLatestApiUrl);
+        Assert.StartsWith("https://api.github.com/repos/", UpdateService.PrimaryLatestApiUrl);
+        Assert.EndsWith("/releases/latest", UpdateService.PrimaryLatestApiUrl);
+
+        Assert.Equal("https://api.github.com/repos/drpetersonfernandes/SimpleZipDrive/releases/latest", UpdateService.FallbackLatestApiUrl);
+        Assert.Contains(expectedRepo, UpdateService.FallbackLatestApiUrl);
     }
 
     [Fact]
     public void ApiUrlConstructionIsCorrect()
     {
-        const string repoOwner = "drpetersonfernandes";
+        const string primaryOwner = "purelogiccode";
+        const string fallbackOwner = "drpetersonfernandes";
         const string repoName = "SimpleZipDrive";
-        const string expectedUrl = $"https://api.github.com/repos/{repoOwner}/{repoName}/releases/latest";
+        const string expectedPrimary = $"https://api.github.com/repos/{primaryOwner}/{repoName}/releases/latest";
+        const string expectedFallback = $"https://api.github.com/repos/{fallbackOwner}/{repoName}/releases/latest";
 
-        Assert.Equal("https://api.github.com/repos/drpetersonfernandes/SimpleZipDrive/releases/latest", expectedUrl);
+        Assert.Equal(expectedPrimary, UpdateService.PrimaryLatestApiUrl);
+        Assert.Equal(expectedFallback, UpdateService.FallbackLatestApiUrl);
     }
 
     #endregion
@@ -290,7 +295,7 @@ public partial class UpdateCheckerTests
     [Fact]
     public void BrowserLaunchUrlIsValidGitHubReleasePage()
     {
-        const string htmlUrl = "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/release_1.10.1";
+        const string htmlUrl = "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/release_1.10.1";
 
         Assert.StartsWith("https://", htmlUrl);
         Assert.Contains("github.com", htmlUrl);
@@ -324,7 +329,7 @@ public partial class UpdateCheckerTests
         var fake = new FakeUserNotificationService();
         var current = new Version(1, 0, 0);
         var latest = new Version(2, 0, 0);
-        const string url = "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/v2.0.0";
+        const string url = "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/v2.0.0";
 
         _ = fake.ShowUpdateAvailable(current, latest, url);
 
@@ -340,7 +345,7 @@ public partial class UpdateCheckerTests
         var fake = new FakeUserNotificationService();
         var current = new Version(1, 0, 0);
         var latest = new Version(2, 0, 0);
-        const string url = "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/v2.0.0";
+        const string url = "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/v2.0.0";
 
         fake.ShowUpdateAvailable(current, latest, url);
         fake.Reset();
@@ -359,14 +364,14 @@ public partial class UpdateCheckerTests
 
         var result = fake.ShowUpdateAvailable(
             new Version(1, 0, 0), new Version(2, 0, 0),
-            "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/v2.0.0");
+            "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/v2.0.0");
 
         Assert.True(result);
 
         fake.ReturnValue = false;
         result = fake.ShowUpdateAvailable(
             new Version(1, 0, 0), new Version(2, 0, 0),
-            "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/v2.0.0");
+            "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/v2.0.0");
 
         Assert.False(result);
     }
@@ -413,7 +418,7 @@ public partial class UpdateCheckerTests
     [Fact]
     public void NotificationMessageContainsDownloadUrl()
     {
-        const string downloadUrl = "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/release_1.10.1";
+        const string downloadUrl = "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/release_1.10.1";
 
         Assert.StartsWith("https://github.com/", downloadUrl, StringComparison.Ordinal);
         Assert.Contains("/releases/tag/", downloadUrl, StringComparison.Ordinal);
@@ -422,7 +427,7 @@ public partial class UpdateCheckerTests
     [Fact]
     public void DeclinedNotificationLogMessageContainsUrl()
     {
-        const string downloadUrl = "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/release_1.10.1";
+        const string downloadUrl = "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/release_1.10.1";
         const string logMessage = $"Update available but user declined to open download page. Visit: {downloadUrl}";
 
         Assert.Contains("Update available", logMessage, StringComparison.Ordinal);
@@ -442,7 +447,7 @@ public partial class UpdateCheckerTests
     [Fact]
     public void BrowserErrorLogMessageContainsUrl()
     {
-        const string downloadUrl = "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/release_1.10.1";
+        const string downloadUrl = "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/release_1.10.1";
         const string logMessage = $"Could not launch browser: access denied. Please visit: {downloadUrl}";
 
         Assert.Contains("Could not launch browser", logMessage, StringComparison.Ordinal);
@@ -478,7 +483,7 @@ public partial class UpdateCheckerTests
     {
         var current = new Version(2, 0, 0);
         var latest = new Version(3, 0, 0);
-        const string downloadUrl = "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/v3.0.0";
+        const string downloadUrl = "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/v3.0.0";
         var fake = new FakeUserNotificationService();
 
         fake.ShowUpdateAvailable(current, latest, downloadUrl);
@@ -497,7 +502,7 @@ public partial class UpdateCheckerTests
 
         var result = fake.ShowUpdateAvailable(
             new Version(1, 0, 0), new Version(2, 0, 0),
-            "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/v2.0.0");
+            "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/v2.0.0");
 
         Assert.False(result);
     }
@@ -509,7 +514,7 @@ public partial class UpdateCheckerTests
 
         var result = fake.ShowUpdateAvailable(
             new Version(1, 0, 0), new Version(2, 0, 0),
-            "https://github.com/drpetersonfernandes/SimpleZipDrive/releases/tag/v2.0.0");
+            "https://github.com/purelogiccode/SimpleZipDrive/releases/tag/v2.0.0");
 
         Assert.True(result);
     }

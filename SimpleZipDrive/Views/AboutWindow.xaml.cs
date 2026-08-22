@@ -32,7 +32,7 @@ public partial class AboutWindow
 
     private void GitHubLink_Click(object sender, RoutedEventArgs e)
     {
-        OpenUrl("https://github.com/drpetersonfernandes/SimpleZipDrive");
+        OpenUrl("https://github.com/purelogiccode/SimpleZipDrive");
     }
 
     private static void OpenUrl(string url)
