@@ -924,7 +924,7 @@ public class MountService : IDisposable, IMountService
     {
         const int maxAttempts = 3;
 
-        for (var attempt = 1; ; attempt++)
+        for (var attempt = 1;; attempt++)
         {
             try
             {

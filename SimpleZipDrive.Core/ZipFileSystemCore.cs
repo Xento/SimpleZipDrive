@@ -234,7 +234,7 @@ public class ZipFileSystemCore : IDisposable
     {
         const int maxPasswordAttempts = 3;
 
-        for (var attempt = 1; ; attempt++)
+        for (var attempt = 1;; attempt++)
         {
             if (stream.CanSeek)
             {
@@ -345,8 +345,10 @@ public class ZipFileSystemCore : IDisposable
     {
         /// <summary>The archive can be used without a password.</summary>
         Usable,
+
         /// <summary>The archive requires a password (encryption confirmed).</summary>
         Encrypted,
+
         /// <summary>Accessibility could not be determined (e.g. parse failure) - encryption is not confirmed.</summary>
         Indeterminate
     }

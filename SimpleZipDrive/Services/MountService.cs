@@ -177,18 +177,16 @@ public class MountService : IDisposable, IMountService
 
     private static bool IsDokanUnavailable(Exception ex)
     {
-        if (ex is DllNotFoundException or EntryPointNotFoundException)
+        switch (ex)
         {
-            return true;
+            case DllNotFoundException or EntryPointNotFoundException:
+                return true;
+            case BadImageFormatException or TypeInitializationException:
+                _dokanArchitectureMismatch = ex is not TypeInitializationException || ex.InnerException is BadImageFormatException;
+                return _dokanArchitectureMismatch;
+            default:
+                return false;
         }
-
-        if (ex is BadImageFormatException or TypeInitializationException)
-        {
-            _dokanArchitectureMismatch = ex is not TypeInitializationException || ex.InnerException is BadImageFormatException;
-            return _dokanArchitectureMismatch;
-        }
-
-        return false;
     }
 
     /// <summary>
@@ -201,7 +199,7 @@ public class MountService : IDisposable, IMountService
     {
         const int maxAttempts = 3;
 
-        for (var attempt = 1; ; attempt++)
+        for (var attempt = 1;; attempt++)
         {
             try
             {

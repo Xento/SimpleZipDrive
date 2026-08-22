@@ -374,7 +374,7 @@ public class ErrorLogger : IDisposable
             // not application bugs - e.g. the update check on machines without internet access.
             case HttpRequestException:
             // Archive decryption failures are user errors (wrong password, encrypted data).
-            case System.Security.Cryptography.CryptographicException:
+            case CryptographicException:
             // Binary/architecture mismatches (e.g. x64 native DLL loaded in an ARM64 process)
             // are environment problems, not application bugs.
             case BadImageFormatException:

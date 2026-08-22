@@ -356,7 +356,7 @@ public class ErrorLoggerAdditionalTests
     // Wrong RAR password (SharpCompress CryptographicException text)
     [InlineData("Mount error: The password did not match.")]
     // Archive locked by another process (antivirus / download manager / torrent client)
-    [InlineData("Mount error: The process cannot access the file 'C:\\GAMES\\game.rar' because it is being used by another process.")]
+    [InlineData(@"Mount error: The process cannot access the file 'C:\GAMES\game.rar' because it is being used by another process.")]
     // Corrupt/truncated RAR file
     [InlineData("Mount error: Unknown Rar Header: 0")]
     // Truncated multi-part archive
