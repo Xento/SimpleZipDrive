@@ -370,9 +370,24 @@ public class ErrorLogger : IDisposable
         {
             // File-related exceptions are typically user errors (file not found, access denied, etc.)
             case FileNotFoundException or DirectoryNotFoundException or UnauthorizedAccessException or IOException:
-            // HttpRequestException with cancellation token is also expected
-            case HttpRequestException { InnerException: OperationCanceledException }:
+            // Network failures (offline, DNS failures, refused connections) are environmental,
+            // not application bugs - e.g. the update check on machines without internet access.
+            case HttpRequestException:
+            // Archive decryption failures are user errors (wrong password, encrypted data).
+            case System.Security.Cryptography.CryptographicException:
+            // Binary/architecture mismatches (e.g. x64 native DLL loaded in an ARM64 process)
+            // are environment problems, not application bugs.
+            case BadImageFormatException:
                 return true;
+        }
+
+        // Index/array exceptions originating from SharpCompress are corrupt-archive symptoms
+        // (mirrors the existing NullReferenceException handling below).
+        if (ex is IndexOutOfRangeException or ArrayTypeMismatchException &&
+            ((ex.Source?.Contains("SharpCompress", StringComparison.OrdinalIgnoreCase) == true) ||
+             (ex.StackTrace?.Contains("SharpCompress", StringComparison.OrdinalIgnoreCase) == true)))
+        {
+            return true;
         }
 
         // Fallback to message-based detection for cases where exception types aren't specific enough
@@ -401,6 +416,15 @@ public class ErrorLogger : IDisposable
             (messageLower.Contains("mount point") && messageLower.Contains("invalid")) ||
             (messageLower.Contains("mount point") && messageLower.Contains("already in use"));
 
+        // Archive data problems reported as plain log messages (no exception object attached):
+        // truncated/corrupt archives, locked files, missing files.
+        var isArchiveDataError =
+            messageLower.Contains("unknown rar header") ||
+            (messageLower.Contains("cannot seek to position") &&
+             messageLower.Contains("end of stream reached")) ||
+            messageLower.Contains("being used by another process") ||
+            messageLower.Contains("archive file not found");
+
         // Password-related errors (user can retry with correct password)
         var isPasswordError =
             messageLower.Contains("password required") ||
@@ -410,6 +434,7 @@ public class ErrorLogger : IDisposable
             messageLower.Contains("missing password") ||
             messageLower.Contains("no password") ||
             messageLower.Contains("password is") ||
+            messageLower.Contains("password did not match") || // SharpCompress CryptographicException text
             messageLower.Contains("requires a password") ||
             messageLower.Contains("need a password") ||
             (messageLower.Contains("encrypted") &&
@@ -441,7 +466,7 @@ public class ErrorLogger : IDisposable
             // e.g. "Dokan error: Can't install the Dokan driver" and "[Warning] ... - Can't install the Dokan driver".
             messageLower.Contains("can't install the dokan driver");
 
-        return isArchiveError || isDriveError || isPasswordError || isCancellationError || isEnvironmentError;
+        return isArchiveError || isArchiveDataError || isDriveError || isPasswordError || isCancellationError || isEnvironmentError;
     }
 
     /// <summary>

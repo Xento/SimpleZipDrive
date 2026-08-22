@@ -320,11 +320,14 @@ public class ErrorLoggerAdditionalTests
     // ─── IsUserError: HttpRequestException without canceled inner ───
 
     [Fact]
-    public void IsUserError_HttpRequestExceptionWithoutCanceledInner_ReturnsFalse()
+    public void IsUserError_HttpRequestExceptionWithoutCanceledInner_ReturnsTrue()
     {
+        // Network failures (offline, DNS failures, refused connections) are environmental
+        // conditions, not application bugs - e.g. the update check on machines without
+        // internet access must not flood the bug report API.
         var ex = new HttpRequestException("request failed", new InvalidOperationException("server error"));
         var result = ErrorLogger.IsUserError(ex);
-        Assert.False(result);
+        Assert.True(result);
     }
 
     // ─── IsUserError: expected environment conditions (WinFsp / Dokan) are not bugs ───
@@ -345,6 +348,75 @@ public class ErrorLoggerAdditionalTests
         var ex = new InvalidOperationException(message);
         var result = ErrorLogger.IsUserError(ex);
         Assert.True(result);
+    }
+
+    // ─── IsUserError: user/data errors observed in bug reports that must not be forwarded ───
+
+    [Theory]
+    // Wrong RAR password (SharpCompress CryptographicException text)
+    [InlineData("Mount error: The password did not match.")]
+    // Archive locked by another process (antivirus / download manager / torrent client)
+    [InlineData("Mount error: The process cannot access the file 'C:\\GAMES\\game.rar' because it is being used by another process.")]
+    // Corrupt/truncated RAR file
+    [InlineData("Mount error: Unknown Rar Header: 0")]
+    // Truncated multi-part archive
+    [InlineData("Mount error: Cannot seek to position 1047630476. End of stream reached at position 1047265280.")]
+    // Archive file missing (e.g. unmounted virtual drive path)
+    [InlineData("Error: Archive file not found at 'Z:\\game.zip'.")]
+    public void IsUserError_UserOrDataErrorsFromBugReports_ReturnsTrue(string message)
+    {
+        var ex = new InvalidOperationException(message);
+        var result = ErrorLogger.IsUserError(ex);
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void IsUserError_CryptographicException_ReturnsTrue()
+    {
+        // In this application CryptographicException comes from archive decryption failures
+        var result = ErrorLogger.IsUserError(new System.Security.Cryptography.CryptographicException("The password did not match."));
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void IsUserError_BadImageFormatException_ReturnsTrue()
+    {
+        // Architecture/binary mismatches are environment problems
+        var result = ErrorLogger.IsUserError(new BadImageFormatException("An attempt was made to load a program with an incorrect format. (0x8007000B)"));
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void IsUserError_IndexOutOfRangeExceptionWithoutSharpCompressContext_ReturnsFalse()
+    {
+        // Without SharpCompress context this must stay reportable (could be a real app bug)
+        var result = ErrorLogger.IsUserError(new IndexOutOfRangeException("Index was outside the bounds of the array."));
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void IsUserError_IndexOutOfRangeExceptionFromSharpCompressStack_ReturnsTrue()
+    {
+        // Corrupt ZIP symptom reported by users (bug #65320/#65321):
+        // IndexOutOfRangeException thrown inside SharpCompress.ZipArchive.LoadEntries.
+        try
+        {
+            ThrowIndexOutOfRangeException_LikeSharpCompressLoadEntries();
+            Assert.Fail("Expected exception was not thrown.");
+        }
+        catch (Exception ex)
+        {
+            // The stack frame below contains 'SharpCompress' via the throwing method name,
+            // mirroring how the production exception carries SharpCompress frames.
+            Assert.True(ErrorLogger.IsUserError(ex));
+        }
+    }
+
+    private static void ThrowIndexOutOfRangeException_LikeSharpCompressLoadEntries()
+    {
+        // Method name intentionally references SharpCompress so the captured stack trace
+        // contains the library name, simulating an exception thrown inside SharpCompress code.
+        throw new IndexOutOfRangeException("Index was outside the bounds of the array.");
     }
 
     [Fact]

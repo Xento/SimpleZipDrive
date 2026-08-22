@@ -682,7 +682,7 @@ public class MountService : IDisposable, IMountService
 
             var crossIntegrity = (_settingsService.Settings.CrossIntegrityMount || IsRunningAsAdministrator()) && !isDriveLetter;
 
-            Stream fileStream = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            Stream fileStream = OpenArchiveFileStream(archivePath);
 
             try
             {
@@ -880,6 +880,13 @@ public class MountService : IDisposable, IMountService
 
             return true;
         }
+        catch (OperationCanceledException ex)
+        {
+            // User cancelled the password prompt - expected behavior, not an error.
+            _loggingService.Log($"Mount cancelled: {ex.Message}");
+            CurrentArchivePath = null;
+            return false;
+        }
         catch (Exception ex) when (ex.Message.Contains("drive", StringComparison.OrdinalIgnoreCase) ||
                                    ex.Message.Contains("mount", StringComparison.OrdinalIgnoreCase))
         {
@@ -905,6 +912,29 @@ public class MountService : IDisposable, IMountService
         if (!char.IsLetter(mountPoint[0])) return false;
 
         return mountPoint[1] == ':';
+    }
+
+    /// <summary>
+    /// Opens the archive file for reading. Uses <see cref="FileShare.ReadWrite"/> so mounting
+    /// succeeds even when another process currently holds the archive open (e.g. antivirus,
+    /// download managers, torrent clients), with a short retry loop for transient sharing
+    /// violations.
+    /// </summary>
+    private static FileStream OpenArchiveFileStream(string archivePath)
+    {
+        const int maxAttempts = 3;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            }
+            catch (IOException) when (attempt < maxAttempts)
+            {
+                Thread.Sleep(500 * attempt);
+            }
+        }
     }
 
     private static bool IsRunningAsAdministrator()

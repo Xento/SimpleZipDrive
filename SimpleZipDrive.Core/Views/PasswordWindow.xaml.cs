@@ -26,17 +26,33 @@ public partial class PasswordWindow
 
     private void Ok_Click(object sender, RoutedEventArgs e)
     {
-        Password = PasswordBox.Password;
-        PasswordBox.Clear();
-        DialogResult = true;
-        Close();
+        CompleteDialog(true);
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
-        Password = null;
+        CompleteDialog(false);
+    }
+
+    /// <summary>
+    /// Completes the dialog with the given result. Guards against repeated invocations
+    /// (e.g. held-down Enter/Escape key auto-repeat firing after the dialog session has
+    /// already ended), which would otherwise throw InvalidOperationException when setting
+    /// DialogResult on a window no longer shown as a dialog.
+    /// </summary>
+    private void CompleteDialog(bool result)
+    {
+        Password = result ? PasswordBox.Password : null;
         PasswordBox.Clear();
-        DialogResult = false;
+        try
+        {
+            DialogResult = result;
+        }
+        catch (InvalidOperationException)
+        {
+            // Dialog session already ended; just close below.
+        }
+
         Close();
     }
 

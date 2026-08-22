@@ -48,7 +48,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="SharpCompress" Version="0.50.3" />
+        <PackageReference Include="SharpCompress" Version="0.50.4" />
         <!-- winfsp.net 2.1.x is built against the latest STABLE WinFsp release (2.1.25156).
              The interop version check accepts any native WinFsp with matching major version
              (2) and minor >= the interop's minor, so 2.1 interop supports native 2.1 (stable)

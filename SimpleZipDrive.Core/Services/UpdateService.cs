@@ -1,4 +1,5 @@
 using System.Net.Security;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Security.Authentication;
 using System.Text.Json;
@@ -105,6 +106,12 @@ public partial class UpdateService : IUpdateService
             }
 
             _userNotificationService.ShowUpdateAvailable(current, latest, htmlUrl);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or SocketException or TimeoutException)
+        {
+            // No internet / DNS failure / connection problem - expected environment condition,
+            // not a bug. Log quietly without forwarding to the bug report API.
+            DiagnosticLogger.Log($"Update check skipped: {ex.GetType().Name}: {ex.Message}");
         }
         catch (Exception ex)
         {

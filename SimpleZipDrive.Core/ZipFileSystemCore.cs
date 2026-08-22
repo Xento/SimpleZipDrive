@@ -152,6 +152,7 @@ public class ZipFileSystemCore : IDisposable
         // Strategy: Try to open and USE the archive without a password first.
         // Only prompt for password if we actually hit a decryption failure.
 
+        bool encryptionConfirmed;
         try
         {
             var archiveWithoutPassword = ArchiveType switch
@@ -163,13 +164,14 @@ public class ZipFileSystemCore : IDisposable
                 _ => throw new NotSupportedException($"Archive type '{ArchiveType}' is not supported.")
             };
 
-            // Try to verify the archive is usable without a password by reading a file entry
-            if (IsArchiveUsableWithoutPassword(archiveWithoutPassword))
+            // Determine whether the archive can be used without a password
+            var usability = GetArchiveUsability(archiveWithoutPassword);
+            if (usability == ArchiveUsability.Usable)
             {
                 return archiveWithoutPassword;
             }
 
-            // Archive is genuinely encrypted - dispose and fall through to password prompt
+            encryptionConfirmed = usability == ArchiveUsability.Encrypted;
             archiveWithoutPassword.Dispose();
         }
         catch (InvalidOperationException)
@@ -188,15 +190,30 @@ public class ZipFileSystemCore : IDisposable
         catch (Exception)
         {
             // Password-related or crypto exception during open - fall through to password prompt
+            encryptionConfirmed = true;
         }
 
-        if (stream.CanSeek)
+        if (!encryptionConfirmed)
         {
-            stream.Position = 0;
+            // Not confirmed as encrypted (e.g. corrupt or unsupported format): keep the legacy
+            // behavior of opening without a password so the genuine parse error surfaces later,
+            // instead of showing a pointless password dialog for damaged archives.
+            if (stream.CanSeek)
+            {
+                stream.Position = 0;
+            }
+
+            return OpenArchiveWithPassword(stream, null);
         }
 
-        var password = _passwordProvider();
+        return PromptAndOpenEncryptedArchive(stream);
+    }
 
+    /// <summary>
+    /// Opens the archive using the supplied password without any accessibility verification.
+    /// </summary>
+    private IArchive OpenArchiveWithPassword(Stream stream, string? password)
+    {
         return ArchiveType switch
         {
             "zip" => ZipArchive.OpenArchive(stream, new ReaderOptions { Password = password, LeaveStreamOpen = true }),
@@ -207,63 +224,200 @@ public class ZipFileSystemCore : IDisposable
         };
     }
 
+    /// <summary>
+    /// Handles a confirmed-encrypted archive: prompts for a password and verifies it by forcing
+    /// entry enumeration before accepting the archive. SharpCompress parses lazily, so without
+    /// this verification a wrong or cancelled password would only surface later as a
+    /// CryptographicException during initialization.
+    /// </summary>
+    private IArchive PromptAndOpenEncryptedArchive(Stream stream)
+    {
+        const int maxPasswordAttempts = 3;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            if (stream.CanSeek)
+            {
+                stream.Position = 0;
+            }
+
+            var password = _passwordProvider();
+
+            if (string.IsNullOrEmpty(password))
+            {
+                throw new OperationCanceledException("Mount cancelled by user.");
+            }
+
+            IArchive? archive = null;
+            try
+            {
+                archive = OpenArchiveWithPassword(stream, password);
+
+                if (!VerifyArchiveAccessible(archive))
+                {
+                    throw new System.Security.Cryptography.CryptographicException("The password did not match.");
+                }
+            }
+            catch (Exception ex) when (IsPasswordMismatch(ex))
+            {
+                archive?.Dispose();
+
+                if (attempt >= maxPasswordAttempts)
+                {
+                    throw new InvalidOperationException(
+                        $"The provided password did not match the encrypted {ArchiveType.ToUpperInvariant()} archive. Mount aborted after {attempt} attempts.", ex);
+                }
+
+                _logErrorAction?.Invoke(null, $"Incorrect password for '{ArchiveType}' archive (attempt {attempt} of {maxPasswordAttempts}). Please try again.");
+                continue;
+            }
+            catch
+            {
+                archive?.Dispose();
+                throw;
+            }
+
+            return archive;
+        }
+    }
+
+    /// <summary>
+    /// Determines whether the exception indicates that decryption failed because an incorrect
+    /// password was supplied (as opposed to cancellation or unrelated failures).
+    /// </summary>
+    private static bool IsPasswordMismatch(Exception ex)
+    {
+        return IsCryptoException(ex) || ZipFsHelpers.IsPasswordRequiredException(ex);
+    }
+
+    /// <summary>
+    /// Forces full entry enumeration to confirm the supplied password can actually decrypt the
+    /// archive. Returns <see langword="false"/> only when a password/crypto failure occurs; when
+    /// accessibility cannot be determined (e.g. no testable entries) the archive is accepted.
+    /// </summary>
+    private static bool VerifyArchiveAccessible(IArchive archive)
+    {
+        try
+        {
+            foreach (var entry in archive.Entries)
+            {
+                if (entry.IsDirectory || !entry.IsEncrypted || entry.Size <= 0)
+                {
+                    continue;
+                }
+
+                using var entryStream = entry.OpenEntryStream();
+                var buffer = new byte[Math.Min(1024, entry.Size)];
+                var totalRead = 0;
+                while (totalRead < buffer.Length)
+                {
+                    var bytesRead = entryStream.Read(buffer, totalRead, buffer.Length - totalRead);
+                    if (bytesRead == 0)
+                    {
+                        break;
+                    }
+
+                    totalRead += bytesRead;
+                }
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (IsCryptoException(ex) || ZipFsHelpers.IsPasswordRequiredException(ex))
+        {
+            return false;
+        }
+        catch
+        {
+            // Unrelated errors (e.g. corruption discovered during verification) are not password
+            // problems - accept the archive and let normal error handling report them.
+            return true;
+        }
+    }
+
     private static bool IsCryptoException(Exception ex)
     {
         return ex is System.Security.Cryptography.CryptographicException ||
                ex.GetType().Name.Contains("CryptographicException", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Verifies if an archive can be used without a password by trying to read a file entry.
-    /// Returns true if the archive is usable without a password, false if it's genuinely encrypted.
-    /// </summary>
-    private static bool IsArchiveUsableWithoutPassword(IArchive archive)
+    private enum ArchiveUsability
     {
+        /// <summary>The archive can be used without a password.</summary>
+        Usable,
+        /// <summary>The archive requires a password (encryption confirmed).</summary>
+        Encrypted,
+        /// <summary>Accessibility could not be determined (e.g. parse failure) - encryption is not confirmed.</summary>
+        Indeterminate
+    }
+
+    /// <summary>
+    /// Determines whether an archive can be used without a password by enumerating entries and
+    /// test-reading one. Distinguishes confirmed encryption from indeterminate failures so that
+    /// corrupt archives do not trigger a pointless password prompt.
+    /// </summary>
+    private static ArchiveUsability GetArchiveUsability(IArchive archive)
+    {
+        // First check: Does the IsEncrypted flag indicate encryption?
+        bool hasEncryptedFlag;
         try
         {
-            // First check: Does the IsEncrypted flag indicate encryption?
-            bool hasEncryptedFlag;
-            try
-            {
-                hasEncryptedFlag = archive.Entries.Any(static e => e.IsEncrypted);
-            }
-            catch (Exception ex) when (ZipFsHelpers.IsPasswordRequiredException(ex) || IsCryptoException(ex))
-            {
-                // Enumerating entries itself requires password (e.g., RAR encrypted headers)
-                return false;
-            }
+            hasEncryptedFlag = archive.Entries.Any(static e => e.IsEncrypted);
+        }
+        catch (Exception ex) when (IsCryptoException(ex) || ZipFsHelpers.IsPasswordRequiredException(ex))
+        {
+            // Enumerating entries itself requires password (e.g., RAR encrypted headers)
+            return ArchiveUsability.Encrypted;
+        }
+        catch
+        {
+            // Parse failure - not necessarily encrypted
+            return ArchiveUsability.Indeterminate;
+        }
 
-            if (!hasEncryptedFlag)
-            {
-                // No entries marked as encrypted - archive is usable
-                return true;
-            }
+        if (!hasEncryptedFlag)
+        {
+            // No entries marked as encrypted - archive is usable
+            return ArchiveUsability.Usable;
+        }
 
-            // Second check: Try to actually read a file entry to verify encryption is real
-            // Some zip tools incorrectly set the encryption flag
-            var testEntry = archive.Entries.FirstOrDefault(static e => e is { IsDirectory: false, Size: > 0 });
-            if (testEntry == null)
-            {
-                // No file entries to test - trust the flag
-                return false;
-            }
+        // Second check: Try to actually read a file entry to verify encryption is real.
+        // Some zip tools incorrectly set the encryption flag.
+        var testEntry = archive.Entries.FirstOrDefault(static e => e is { IsDirectory: false, Size: > 0 });
+        if (testEntry == null)
+        {
+            // No file entries to test - trust the flag
+            return ArchiveUsability.Encrypted;
+        }
 
+        try
+        {
             using var entryStream = testEntry.OpenEntryStream();
             var buffer = new byte[Math.Min(1024, testEntry.Size)];
-            var bytesRead = entryStream.Read(buffer, 0, buffer.Length);
+            var totalRead = 0;
+            while (totalRead < buffer.Length)
+            {
+                var bytesRead = entryStream.Read(buffer, totalRead, buffer.Length - totalRead);
+                if (bytesRead == 0)
+                {
+                    break;
+                }
+
+                totalRead += bytesRead;
+            }
 
             // If we can read bytes, the entry is not actually encrypted
-            return bytesRead > 0;
+            return totalRead > 0 ? ArchiveUsability.Usable : ArchiveUsability.Encrypted;
         }
-        catch (Exception ex) when (ZipFsHelpers.IsPasswordRequiredException(ex) || IsCryptoException(ex))
+        catch (Exception ex) when (IsCryptoException(ex) || ZipFsHelpers.IsPasswordRequiredException(ex))
         {
             // Password-related or crypto exception confirms encryption
-            return false;
+            return ArchiveUsability.Encrypted;
         }
         catch
         {
             // Other errors - trust the encryption flag
-            return false;
+            return ArchiveUsability.Encrypted;
         }
     }
 
@@ -309,8 +463,15 @@ public class ZipFileSystemCore : IDisposable
             var message = ex.Message;
             var stackTrace = ex.StackTrace ?? "";
             var isDataCorruptionError = ex is IndexOutOfRangeException ||
+                                        ex is EndOfStreamException ||
+                                        exceptionTypeName.Contains("InvalidFormat", StringComparison.OrdinalIgnoreCase) ||
                                         exceptionTypeName.Contains("DataError", StringComparison.OrdinalIgnoreCase) ||
                                         message.Contains("Data Error", StringComparison.OrdinalIgnoreCase) ||
+                                        // SharpCompress throws this for truncated or non-RAR files.
+                                        message.Contains("Unknown Rar Header", StringComparison.OrdinalIgnoreCase) ||
+                                        // Truncated archives fail with seek-beyond-end-of-stream errors.
+                                        message.Contains("Cannot seek to position", StringComparison.OrdinalIgnoreCase) ||
+                                        message.Contains("End of stream reached", StringComparison.OrdinalIgnoreCase) ||
                                         stackTrace.Contains("SharpCompress.Compressors.LZMA", StringComparison.OrdinalIgnoreCase) ||
                                         stackTrace.Contains("SharpCompress.Archives.Zip.ZipArchive.LoadEntries", StringComparison.OrdinalIgnoreCase);
 

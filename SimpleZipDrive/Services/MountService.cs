@@ -175,6 +175,47 @@ public class MountService : IDisposable, IMountService
     [DllImport("dokan2.dll", ExactSpelling = true)]
     private static extern uint DokanVersion();
 
+    private static bool IsDokanUnavailable(Exception ex)
+    {
+        if (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return true;
+        }
+
+        if (ex is BadImageFormatException or TypeInitializationException)
+        {
+            _dokanArchitectureMismatch = ex is not TypeInitializationException || ex.InnerException is BadImageFormatException;
+            return _dokanArchitectureMismatch;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Opens the archive file for reading. Uses <see cref="FileShare.ReadWrite"/> so mounting
+    /// succeeds even when another process currently holds the archive open (e.g. antivirus,
+    /// download managers, torrent clients), with a short retry loop for transient sharing
+    /// violations.
+    /// </summary>
+    private static FileStream OpenArchiveFileStream(string archivePath)
+    {
+        const int maxAttempts = 3;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return new FileStream(archivePath, FileMode.Open, System.IO.FileAccess.Read, FileShare.ReadWrite);
+            }
+            catch (IOException) when (attempt < maxAttempts)
+            {
+                Thread.Sleep(500 * attempt);
+            }
+        }
+    }
+
+    private static bool _dokanArchitectureMismatch;
+
     private static bool IsDokanInstalled()
     {
         try
@@ -189,15 +230,39 @@ public class MountService : IDisposable, IMountService
         {
             return false;
         }
+        catch (BadImageFormatException)
+        {
+            // dokan2.dll exists but cannot be loaded into this process - typically an x64/x86
+            // DLL on an ARM64 system (or vice versa). Treat as not installed so the user gets
+            // actionable guidance instead of an unhandled BadImageFormatException.
+            _dokanArchitectureMismatch = true;
+            return false;
+        }
     }
 
     private static void ShowDokanNotInstalledDialog()
     {
-        const string message = "The Dokan file system driver (dokan2.dll) is required to mount archives as virtual drives. " +
-                               "It does not appear to be installed on this system.\n\n" +
-                               "Would you like to open the Dokan download page?";
+        string message;
+        string title;
 
-        var result = MessageBox.Show(message, "Dokan Driver Not Found",
+        if (_dokanArchitectureMismatch)
+        {
+            title = "Dokan Driver Incompatible";
+            message = $"The Dokan file system driver (dokan2.dll) was found but could not be loaded " +
+                      $"into this process ({RuntimeInformation.ProcessArchitecture}). This usually means the installed " +
+                      $"Dokan driver does not support this system architecture (e.g. an x64 driver on an ARM64 device).\n\n" +
+                      "Please install the latest Dokan release and verify it supports your architecture.\n\n" +
+                      "Would you like to open the Dokan download page?";
+        }
+        else
+        {
+            title = "Dokan Driver Not Found";
+            message = "The Dokan file system driver (dokan2.dll) is required to mount archives as virtual drives. " +
+                      "It does not appear to be installed on this system.\n\n" +
+                      "Would you like to open the Dokan download page?";
+        }
+
+        var result = MessageBox.Show(message, title,
             MessageBoxButton.YesNo, MessageBoxImage.Warning);
 
         if (result == MessageBoxResult.Yes)
@@ -253,7 +318,7 @@ public class MountService : IDisposable, IMountService
             {
                 dokan = new Dokan(logger);
             }
-            catch (DllNotFoundException ex)
+            catch (Exception ex) when (IsDokanUnavailable(ex))
             {
                 ErrorLoggerStatic.ReportSilentException(ex, "Dokan driver not found during auto-mount");
                 _loggingService.LogError("Dokan driver not found. Unable to mount archive.");
@@ -291,7 +356,7 @@ public class MountService : IDisposable, IMountService
         {
             dokan = new Dokan(logger);
         }
-        catch (DllNotFoundException ex)
+        catch (Exception ex) when (IsDokanUnavailable(ex))
         {
             ErrorLoggerStatic.ReportSilentException(ex, "Dokan driver not found during specified mount");
             _loggingService.LogError("Dokan driver not found. Unable to mount archive.");
@@ -331,7 +396,7 @@ public class MountService : IDisposable, IMountService
             _loggingService.Log($"RAM cache limit: {effectiveMaxMemoryMb:F0} MB (Available system memory: {availableMemoryMb:F0} MB)");
             _loggingService.Log("");
 
-            Stream fileStream = new FileStream(archivePath, FileMode.Open, System.IO.FileAccess.Read, FileShare.Read);
+            Stream fileStream = OpenArchiveFileStream(archivePath);
 
             try
             {
@@ -410,6 +475,13 @@ public class MountService : IDisposable, IMountService
             }
 
             return true;
+        }
+        catch (OperationCanceledException ex)
+        {
+            // User cancelled the password prompt - expected behavior, not an error.
+            _loggingService.Log($"Mount cancelled: {ex.Message}");
+            CurrentArchivePath = null;
+            return false;
         }
         catch (DokanException ex)
         {
