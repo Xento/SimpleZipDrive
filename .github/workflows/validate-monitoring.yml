@@ -1,0 +1,68 @@
+name: Validate monitoring branch
+
+on:
+  push:
+    branches:
+      - tmp-monitoring-build-validate
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-publish:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@v4
+        with:
+          ref: tmp-monitoring-build-validate
+          fetch-depth: 0
+
+      - name: Decode monitoring patch
+        shell: pwsh
+        run: |
+          $encoded = (Get-Content 'monitoring.patch.gz.b64' -Raw).Trim()
+          $gzipPath = Join-Path $env:RUNNER_TEMP 'monitoring.patch.gz'
+          $patchPath = Join-Path $env:RUNNER_TEMP 'monitoring.patch'
+          [IO.File]::WriteAllBytes($gzipPath, [Convert]::FromBase64String($encoded))
+          $input = [IO.File]::OpenRead($gzipPath)
+          $output = [IO.File]::Create($patchPath)
+          try {
+            $gzip = [IO.Compression.GZipStream]::new($input, [IO.Compression.CompressionMode]::Decompress)
+            try { $gzip.CopyTo($output) } finally { $gzip.Dispose() }
+          } finally {
+            $output.Dispose()
+            $input.Dispose()
+          }
+          "PATCH_PATH=$patchPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Apply source changes
+        shell: pwsh
+        run: |
+          git apply --check "$env:PATCH_PATH"
+          git apply "$env:PATCH_PATH"
+
+      - name: Build complete solution
+        shell: pwsh
+        run: dotnet build CSharp_SimpleZipDrive.sln -c Release
+
+      - name: Publish one clean source commit
+        shell: pwsh
+        run: |
+          git fetch origin multivolume-rar
+          git checkout --detach origin/multivolume-rar
+          git apply --check "$env:PATCH_PATH"
+          git apply "$env:PATCH_PATH"
+          git config user.name 'ChatGPT'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -- \
+            SimpleZipDrive.Core/Models/LogEntry.cs \
+            SimpleZipDrive.Core/Services/LoggingService.cs \
+            SimpleZipDrive.Core/DiagnosticLogger.cs \
+            SimpleZipDrive.Core/RuntimeMonitor.cs \
+            SimpleZipDrive.Core/ZipFileSystemCore.cs \
+            SimpleZipDrive/MainWindow.Monitoring.cs \
+            SimpleZipDrive_WinFsp/MainWindow.Monitoring.cs \
+            SimpleZipDrive_WinFsp/ZipFs.cs
+          git commit -m 'Add live cache and file operation monitoring'
+          git push --force origin HEAD:multivolume-rar-monitoring
