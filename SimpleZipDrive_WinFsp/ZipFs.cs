@@ -345,6 +345,9 @@ public sealed class ZipFs : FileSystemBase, IDisposable
     {
         BytesTransferred = 0;
 
+        var tracePath = FileNode is EntryNode traceNode ? traceNode.NormalizedPath : "?";
+        DiagnosticLogger.Log($"  Read: ENTER \"{tracePath}\" offset={Offset}, length={Length}");
+
         if (FileNode is EntryNode { IsDir: true })
             return STATUS_ACCESS_DENIED;
 

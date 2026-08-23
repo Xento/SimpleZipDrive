@@ -1,6 +1,20 @@
 namespace SimpleZipDrive.Core.Models;
 
 /// <summary>
+/// Categories used by the live log/operation monitor.
+/// </summary>
+public enum LogCategory
+{
+    General,
+    Open,
+    Read,
+    Directory,
+    Metadata,
+    Cache,
+    Error
+}
+
+/// <summary>
 /// Represents a single log message displayed in the application's log panel.
 /// </summary>
 public class LogEntry
@@ -14,10 +28,24 @@ public class LogEntry
     /// <summary>Gets a value indicating whether this entry represents an error.</summary>
     public bool IsError { get; init; }
 
-    /// <summary>Returns the formatted log message, prefixed with <c>[ERROR] </c> when applicable.</summary>
+    /// <summary>Gets the live monitor category for this entry.</summary>
+    public LogCategory Category { get; init; } = LogCategory.General;
+
+    /// <summary>Returns the formatted log message with a category prefix when applicable.</summary>
     public override string ToString()
     {
-        var prefix = IsError ? "[ERROR] " : string.Empty;
+        var prefix = Category switch
+        {
+            LogCategory.Error => "[ERROR] ",
+            LogCategory.Open => "[OPEN] ",
+            LogCategory.Read => "[READ] ",
+            LogCategory.Directory => "[DIR] ",
+            LogCategory.Metadata => "[META] ",
+            LogCategory.Cache => "[CACHE] ",
+            _ when IsError => "[ERROR] ",
+            _ => string.Empty
+        };
+
         return $"{prefix}{Message}";
     }
 }

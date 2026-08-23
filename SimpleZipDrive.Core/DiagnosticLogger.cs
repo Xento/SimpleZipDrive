@@ -98,6 +98,10 @@ public static class DiagnosticLogger
     /// <param name="message">The message to log.</param>
     public static void Log(string message)
     {
+        // Live monitoring is independent from verbose diagnostic-file logging. This keeps the
+        // Procmon-style UI trace available without requiring debug logging to be enabled.
+        RuntimeMonitor.CaptureDiagnosticMessage(message);
+
         if (!IsEnabled) return;
 
         var timestamp = DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture);

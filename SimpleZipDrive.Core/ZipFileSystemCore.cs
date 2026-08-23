@@ -30,6 +30,7 @@ public class ZipFileSystemCore : IDisposable
 
     // Cache for large files extracted to disk.
     internal readonly Dictionary<string, string> LargeFileCache = new(StringComparer.OrdinalIgnoreCase);
+    private long _diskCacheUsage;
 
     // Per-entry semaphores for extraction synchronization (Fix: reduce global lock contention).
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _entryLocks = new(StringComparer.OrdinalIgnoreCase);
@@ -84,6 +85,7 @@ public class ZipFileSystemCore : IDisposable
         VolumeLabel = volumeLabel ?? DefaultVolumeLabel;
         var availableMemory = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
         MaxTotalMemoryCache = (long)(availableMemory * 0.90);
+        RuntimeMonitor.ResetForMount(MaxTotalMemoryCache, MaxMemorySize);
 
         var tempDirName = ZipFsHelpers.GenerateTempDirectoryName();
         TempDirectoryPath = Path.Combine(ZipFsHelpers.BaseTempPath, tempDirName);
@@ -936,6 +938,7 @@ public class ZipFileSystemCore : IDisposable
                 entry.LastUsed = Environment.TickCount64;
                 _memoryEntryCache[normalizedPath] = entry;
                 CurrentMemoryUsage += entryBytes.Length;
+                RuntimeMonitor.UpdateMemoryCache(CurrentMemoryUsage, _memoryEntryCache.Count);
                 return new SharedMemoryStream(entryBytes, () => ReleaseMemoryEntry(normalizedPath));
             }
         }
@@ -1004,6 +1007,8 @@ public class ZipFileSystemCore : IDisposable
                 CurrentMemoryUsage = 0;
             }
         }
+
+        RuntimeMonitor.UpdateMemoryCache(CurrentMemoryUsage, _memoryEntryCache.Count);
     }
 
     private FileStream? OpenDiskCachedStream(IArchiveEntry entry, string normalizedPath, long entrySize, bool isLargeFile)
@@ -1134,9 +1139,12 @@ public class ZipFileSystemCore : IDisposable
                         return null;
                     }
 
+                    var cachedLength = GetCachedFileLength(newTempFilePath);
                     lock (_archiveLock)
                     {
                         LargeFileCache[normalizedPath] = newTempFilePath;
+                        _diskCacheUsage += cachedLength;
+                        RuntimeMonitor.UpdateDiskCache(_diskCacheUsage, LargeFileCache.Count);
                     }
 
                     cachedPath = newTempFilePath;
@@ -1168,6 +1176,19 @@ public class ZipFileSystemCore : IDisposable
         catch (Exception fsEx)
         {
             throw new IOException($"Failed to open cached temp file '{cachedPath}' for reading file '{normalizedPath}'.", fsEx);
+        }
+    }
+
+    private static long GetCachedFileLength(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? new FileInfo(path).Length : 0;
+        }
+        catch (Exception ex)
+        {
+            ErrorLoggerStatic.ReportSilentException(ex, $"ZipFs.GetCachedFileLength: Could not inspect '{path}'", true);
+            return 0;
         }
     }
 
@@ -1358,9 +1379,12 @@ public class ZipFileSystemCore : IDisposable
                     }
                 }
 
+                var cachedLength = GetCachedFileLength(tempFilePath);
                 lock (_archiveLock)
                 {
                     LargeFileCache[normalizedPath] = tempFilePath;
+                    _diskCacheUsage += cachedLength;
+                    RuntimeMonitor.UpdateDiskCache(_diskCacheUsage, LargeFileCache.Count);
                 }
 
                 return new FileStream(tempFilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -1510,12 +1534,15 @@ public class ZipFileSystemCore : IDisposable
             }
 
             LargeFileCache.Clear();
+            _diskCacheUsage = 0;
         }
+        RuntimeMonitor.UpdateDiskCache(0, 0);
 
         lock (_memoryLock)
         {
             _memoryEntryCache.Clear();
             CurrentMemoryUsage = 0;
+            RuntimeMonitor.UpdateMemoryCache(0, 0);
         }
 
         foreach (var semaphore in _entryLocks.Values)
@@ -1549,6 +1576,7 @@ public class ZipFileSystemCore : IDisposable
             CurrentMemoryUsage = 0;
         }
 
+        RuntimeMonitor.ClearCacheStats();
         DiagnosticLogger.LogHeader("ZipFs DISPOSE complete");
         GC.SuppressFinalize(this);
     }
