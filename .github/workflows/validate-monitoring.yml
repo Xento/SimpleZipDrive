@@ -24,6 +24,7 @@ jobs:
       - name: Decode monitoring patch
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $encoded = (Get-Content 'monitoring.patch.gz.b64' -Raw).Trim()
           $gzipPath = Join-Path $env:RUNNER_TEMP 'monitoring.patch.gz'
           $patchPath = Join-Path $env:RUNNER_TEMP 'monitoring.patch'
@@ -39,33 +40,37 @@ jobs:
           }
           "PATCH_PATH=$patchPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Apply source changes
+      - name: Prepare clean base and apply source changes
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          git fetch origin multivolume-rar
+          if ($LASTEXITCODE -ne 0) { throw 'git fetch failed' }
+          git reset --hard origin/multivolume-rar
+          if ($LASTEXITCODE -ne 0) { throw 'git reset failed' }
+          git clean -fdx
+          if ($LASTEXITCODE -ne 0) { throw 'git clean failed' }
           git apply --check "$env:PATCH_PATH"
+          if ($LASTEXITCODE -ne 0) { throw 'git apply --check failed' }
           git apply "$env:PATCH_PATH"
+          if ($LASTEXITCODE -ne 0) { throw 'git apply failed' }
 
       - name: Build complete solution
         shell: pwsh
-        run: dotnet build CSharp_SimpleZipDrive.sln -c Release
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet build CSharp_SimpleZipDrive.sln -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'dotnet build failed' }
 
       - name: Publish one clean source commit
         shell: pwsh
         run: |
-          git fetch origin multivolume-rar
-          git checkout --detach origin/multivolume-rar
-          git apply --check "$env:PATCH_PATH"
-          git apply "$env:PATCH_PATH"
+          $ErrorActionPreference = 'Stop'
           git config user.name 'ChatGPT'
           git config user.email 'actions@users.noreply.github.com'
-          git add -- \
-            SimpleZipDrive.Core/Models/LogEntry.cs \
-            SimpleZipDrive.Core/Services/LoggingService.cs \
-            SimpleZipDrive.Core/DiagnosticLogger.cs \
-            SimpleZipDrive.Core/RuntimeMonitor.cs \
-            SimpleZipDrive.Core/ZipFileSystemCore.cs \
-            SimpleZipDrive/MainWindow.Monitoring.cs \
-            SimpleZipDrive_WinFsp/MainWindow.Monitoring.cs \
-            SimpleZipDrive_WinFsp/ZipFs.cs
+          git add --all
+          if ($LASTEXITCODE -ne 0) { throw 'git add failed' }
           git commit -m 'Add live cache and file operation monitoring'
+          if ($LASTEXITCODE -ne 0) { throw 'git commit failed' }
           git push --force origin HEAD:multivolume-rar-monitoring
+          if ($LASTEXITCODE -ne 0) { throw 'git push failed' }
