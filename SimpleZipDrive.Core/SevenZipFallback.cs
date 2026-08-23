@@ -1,10 +1,14 @@
 using System.Runtime.InteropServices;
+using SharpCompress.Archives;
+using SharpCompress.Readers;
+using SharpCompress.Readers.Rar;
 
 namespace SimpleZipDrive.Core;
 
 /// <summary>
 /// Fallback archive extractor using SharpSevenZip (native 7z.dll).
-/// Used when SharpCompress fails to extract an entry.
+/// For RAR archives, a sequential SharpCompress RarReader fallback is also used so entries
+/// spanning or residing in later volumes can still be extracted reliably.
 /// </summary>
 internal sealed class SevenZipFallback : IDisposable
 {
@@ -23,6 +27,8 @@ internal sealed class SevenZipFallback : IDisposable
 
     /// <summary>
     /// Tries to extract an entry by its normalized path to the output stream.
+    /// SharpSevenZip is attempted first. For RAR files, failures are retried using a
+    /// forward-only RarReader over every detected volume.
     /// Returns true if extraction succeeded, false otherwise.
     /// </summary>
     public bool TryExtractEntry(string normalizedPath, Stream outputStream)
@@ -33,52 +39,149 @@ internal sealed class SevenZipFallback : IDisposable
         {
             EnsureInitialized();
 
-            if (_entryIndexMap == null)
+            if (_entryIndexMap != null)
+            {
+                // Normalize path: SharpSevenZip uses backslash-separated paths
+                var searchPaths = new[]
+                {
+                    normalizedPath.TrimStart('/'),
+                    normalizedPath.TrimStart('/').Replace('/', '\\')
+                };
+
+                foreach (var searchPath in searchPaths)
+                {
+                    if (_entryIndexMap.TryGetValue(searchPath, out var index))
+                    {
+                        try
+                        {
+                            lock (_lock)
+                            {
+                                if (_extractor != null)
+                                {
+                                    _extractor.ExtractFile(index, outputStream);
+                                    return true;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            DiagnosticLogger.Log(ex, $"SevenZip extraction failed for '{normalizedPath}', trying sequential RAR fallback.");
+                            break;
+                        }
+                    }
+                }
+
+                // Case-insensitive fallback search
+                var normalizedLower = normalizedPath.TrimStart('/').ToLowerInvariant();
+                foreach (var kvp in _entryIndexMap)
+                {
+                    if (kvp.Key.Replace('\\', '/').Equals(normalizedLower, StringComparison.OrdinalIgnoreCase) ||
+                        kvp.Key.Equals(normalizedLower, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            lock (_lock)
+                            {
+                                if (_extractor != null)
+                                {
+                                    _extractor.ExtractFile(kvp.Value, outputStream);
+                                    return true;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            DiagnosticLogger.Log(ex, $"SevenZip case-insensitive extraction failed for '{normalizedPath}', trying sequential RAR fallback.");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            DiagnosticLogger.Log(ex, $"SevenZip fallback initialization/search failed for '{normalizedPath}', trying sequential RAR fallback.");
+        }
+
+        if (!ResetOutputForRetry(outputStream))
+            return false;
+
+        return TryExtractMultiVolumeRarEntry(normalizedPath, outputStream);
+    }
+
+    /// <summary>
+    /// Sequentially reads a RAR archive through all detected volume files until the requested
+    /// entry is reached. This is slower than random access, but it correctly follows split and
+    /// solid data into later .partNNN.rar/.rNN volumes. The caller's normal RAM/disk cache then
+    /// keeps the extracted result for subsequent accesses.
+    /// </summary>
+    private bool TryExtractMultiVolumeRarEntry(string normalizedPath, Stream outputStream)
+    {
+        if (!_archivePath.EndsWith(".rar", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        List<FileStream>? volumeStreams = null;
+        try
+        {
+            var volumeFiles = ArchiveFactory.GetFileParts(new FileInfo(_archivePath)).ToArray();
+            if (volumeFiles.Length == 0)
                 return false;
 
-            // Normalize path: SharpSevenZip uses backslash-separated paths
-            var searchPaths = new[]
+            volumeStreams = volumeFiles.Select(static file => file.OpenRead()).ToList();
+
+            var password = _passwordProvider();
+            var readerOptions = new ReaderOptions
             {
-                normalizedPath.TrimStart('/'),
-                normalizedPath.TrimStart('/').Replace('/', '\\')
+                Password = string.IsNullOrEmpty(password) ? null : password,
+                LeaveStreamOpen = true
             };
 
-            foreach (var searchPath in searchPaths)
+            using var reader = RarReader.OpenReader(volumeStreams, readerOptions);
+            while (reader.MoveToNextEntry())
             {
-                if (_entryIndexMap.TryGetValue(searchPath, out var index))
-                {
-                    lock (_lock)
-                    {
-                        if (_extractor == null)
-                            return false;
+                if (reader.Entry.IsDirectory || string.IsNullOrEmpty(reader.Entry.Key))
+                    continue;
 
-                        _extractor.ExtractFile(index, outputStream);
-                    }
+                var candidatePath = ZipFsHelpers.NormalizePath(reader.Entry.Key);
+                if (!candidatePath.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase))
+                    continue;
 
-                    return true;
-                }
+                using var entryStream = reader.OpenEntryStream();
+                entryStream.CopyTo(outputStream);
+                DiagnosticLogger.Log($"Sequential RAR fallback extracted '{normalizedPath}' using {volumeFiles.Length} volume(s).");
+                return true;
             }
 
-            // Case-insensitive fallback search
-            var normalizedLower = normalizedPath.TrimStart('/').ToLowerInvariant();
-            foreach (var kvp in _entryIndexMap)
-            {
-                if (kvp.Key.Replace('\\', '/').Equals(normalizedLower, StringComparison.OrdinalIgnoreCase) ||
-                    kvp.Key.Equals(normalizedLower, StringComparison.OrdinalIgnoreCase))
-                {
-                    lock (_lock)
-                    {
-                        if (_extractor == null)
-                            return false;
-
-                        _extractor.ExtractFile(kvp.Value, outputStream);
-                    }
-
-                    return true;
-                }
-            }
-
+            DiagnosticLogger.Log($"Sequential RAR fallback could not find '{normalizedPath}' in {volumeFiles.Length} volume(s).");
             return false;
+        }
+        catch (Exception ex)
+        {
+            DiagnosticLogger.Log(ex, $"Sequential multi-volume RAR fallback failed for '{normalizedPath}'.");
+            return false;
+        }
+        finally
+        {
+            if (volumeStreams != null)
+            {
+                foreach (var stream in volumeStreams)
+                {
+                    stream.Dispose();
+                }
+            }
+        }
+    }
+
+    private static bool ResetOutputForRetry(Stream outputStream)
+    {
+        try
+        {
+            if (!outputStream.CanSeek)
+                return false;
+
+            outputStream.Position = 0;
+            outputStream.SetLength(0);
+            return true;
         }
         catch
         {
@@ -99,7 +202,10 @@ internal sealed class SevenZipFallback : IDisposable
             try
             {
                 if (!TrySetLibraryPath())
+                {
+                    _entryIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                     return;
+                }
 
                 var password = _passwordProvider();
                 _extractor = string.IsNullOrEmpty(password)
@@ -117,8 +223,9 @@ internal sealed class SevenZipFallback : IDisposable
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                DiagnosticLogger.Log(ex, $"SevenZip fallback initialization failed for '{_archivePath}'. Sequential RAR fallback remains available.");
                 _entryIndexMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             }
         }
