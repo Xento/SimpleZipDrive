@@ -50,6 +50,7 @@ public class ZipFileSystemCore : IDisposable
     private readonly Func<string?> _passwordProvider;
     private readonly SevenZipFallback? _sevenZipFallback;
     private readonly string? _archiveFilePath;
+    private readonly IReadOnlyList<FileInfo>? _rarVolumeFiles;
     private int _disposedInt;
 
     /// <summary>Default volume label displayed in Windows Explorer.</summary>
@@ -96,6 +97,13 @@ public class ZipFileSystemCore : IDisposable
             if (archiveStream is FileStream fs)
             {
                 _archiveFilePath = fs.Name;
+
+                // SharpCompress needs file paths (rather than one already-open stream) in order
+                // to discover the remaining volumes of a split RAR archive.
+                if (ArchiveType == "rar")
+                {
+                    _rarVolumeFiles = ArchiveFactory.GetFileParts(new FileInfo(fs.Name)).ToArray();
+                }
             }
 
             if (archiveStream.CanSeek)
@@ -122,6 +130,11 @@ public class ZipFileSystemCore : IDisposable
             DiagnosticLogger.Log($"  Temp directory: {TempDirectoryPath}");
             DiagnosticLogger.Log($"  Source stream CanSeek: {archiveStream.CanSeek}");
             DiagnosticLogger.Log($"  Source stream Length: {(archiveStream.CanSeek ? archiveStream.Length / 1024.0 / 1024.0 : -1):F2} MB");
+            if (_rarVolumeFiles is { Count: > 0 })
+            {
+                DiagnosticLogger.Log($"  RAR volumes: {_rarVolumeFiles.Count}");
+                DiagnosticLogger.Log($"  RAR total volume size: {_rarVolumeFiles.Sum(static file => file.Length) / 1024.0 / 1024.0:F2} MB");
+            }
         }
         catch (Exception ex)
         {
@@ -144,8 +157,10 @@ public class ZipFileSystemCore : IDisposable
     /// <summary>Gets the maximum size (in bytes) of a single entry that can be cached in memory.</summary>
     public long MaxMemorySize { get; }
 
-    /// <summary>Gets the total size in bytes of the source archive stream, or 0 if the stream is not seekable.</summary>
-    public long TotalSize => _sourceArchiveStream.CanSeek ? _sourceArchiveStream.Length : 0;
+    /// <summary>Gets the total size in bytes of the source archive, including all detected RAR volumes.</summary>
+    public long TotalSize => _rarVolumeFiles is { Count: > 0 }
+        ? _rarVolumeFiles.Sum(static file => file.Length)
+        : _sourceArchiveStream.CanSeek ? _sourceArchiveStream.Length : 0;
 
     private IArchive OpenArchive(Stream stream)
     {
@@ -159,7 +174,7 @@ public class ZipFileSystemCore : IDisposable
             {
                 "zip" => ZipArchive.OpenArchive(stream, new ReaderOptions { LeaveStreamOpen = true }),
                 "7z" => SevenZipArchive.OpenArchive(stream, new ReaderOptions { LeaveStreamOpen = true }),
-                "rar" => RarArchive.OpenArchive(stream, new ReaderOptions { LeaveStreamOpen = true }),
+                "rar" => OpenRarArchive(null),
                 "tar" => TarArchive.OpenArchive(stream, new ReaderOptions { LeaveStreamOpen = true }),
                 _ => throw new NotSupportedException($"Archive type '{ArchiveType}' is not supported.")
             };
@@ -218,10 +233,44 @@ public class ZipFileSystemCore : IDisposable
         {
             "zip" => ZipArchive.OpenArchive(stream, new ReaderOptions { Password = password, LeaveStreamOpen = true }),
             "7z" => SevenZipArchive.OpenArchive(stream, new ReaderOptions { Password = password, LeaveStreamOpen = true }),
-            "rar" => RarArchive.OpenArchive(stream, new ReaderOptions { Password = password, LeaveStreamOpen = true }),
+            "rar" => OpenRarArchive(password),
             "tar" => TarArchive.OpenArchive(stream, new ReaderOptions { Password = password, LeaveStreamOpen = true }),
             _ => throw new NotSupportedException($"Archive type '{ArchiveType}' is not supported.")
         };
+    }
+
+    /// <summary>
+    /// Opens a RAR archive from its source file path when available. SharpCompress can only
+    /// discover and open subsequent RAR volumes (for example .part02.rar, .r00, .001) when it
+    /// is given the source file path/FileInfo. Opening from the already-created single stream
+    /// restricts it to that one volume.
+    /// </summary>
+    private IArchive OpenRarArchive(string? password)
+    {
+        if (_rarVolumeFiles is { Count: > 1 })
+        {
+            return RarArchive.OpenArchive(
+                _rarVolumeFiles,
+                new ReaderOptions { Password = password });
+        }
+
+        if (!string.IsNullOrWhiteSpace(_archiveFilePath))
+        {
+            return RarArchive.OpenArchive(
+                _archiveFilePath,
+                new ReaderOptions { Password = password });
+        }
+
+        // Fallback for callers that supplied a non-file stream. Multi-volume discovery is not
+        // possible without a source file path, so preserve the previous single-stream behavior.
+        if (_sourceArchiveStream.CanSeek)
+        {
+            _sourceArchiveStream.Position = 0;
+        }
+
+        return RarArchive.OpenArchive(
+            _sourceArchiveStream,
+            new ReaderOptions { Password = password, LeaveStreamOpen = true });
     }
 
     /// <summary>
