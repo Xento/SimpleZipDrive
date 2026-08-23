@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - tmp-monitoring-build-validate
+  pull_request:
+    branches:
+      - multivolume-rar
 
 permissions:
   contents: write
